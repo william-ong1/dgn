@@ -1,15 +1,13 @@
-import os
 import re
-import pickle
 import torch
 import torch.nn as nn
 import numpy as np
-import matplotlib.pyplot as plt
-from scipy.linalg import solve
 from collections import namedtuple 
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.metrics import r2_score
-from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge, Lasso
+from sklearn.linear_model import Ridge, Lasso
+
+flatten = lambda arr: arr.reshape(-1, arr.shape[-1])
 
 def check_pattern(string, patterns):
     if len(patterns) == 0: return True
@@ -208,3 +206,30 @@ def expand_input_channel_size(
     channel.input_size += added_dims
     rnn_base.input_size += added_dims
     return channel
+
+
+def generate_noisy_sine_waves(batch, time, dim, freq, noise_level=0.1):
+    """
+    Generate noisy sine waves with different frequencies for each dimension.
+
+    Args:
+        batch (int): Number of batches.
+        time (int): Number of time steps.
+        dim (int): Number of dimensions.
+        freq (list): List of frequencies for each dimension.
+        noise_level (float): Level of noise to be added to the sine waves.
+
+    Returns:
+        waves (numpy.ndarray): Array of shape (batch, time, dim) containing the generated noisy sine waves.
+    """
+    waves = np.zeros((batch, time, dim))
+    time_vector = np.arange(time)
+
+    for d in range(dim):
+        for b in range(batch):
+            noise = np.random.normal(scale=noise_level, size=time)
+            phase = np.random.uniform(0, 2 * np.pi)
+            wave = np.sin(freq[d] * time_vector + phase) + noise
+            waves[b, :, d] = wave
+
+    return waves

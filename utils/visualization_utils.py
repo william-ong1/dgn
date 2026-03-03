@@ -1,11 +1,6 @@
 import os
-import tqdm
-import shutil
-import imageio
-import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
-from IPython.display import Image, display
 
 # ========== Simple functions ========== #
 

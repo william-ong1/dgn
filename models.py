@@ -1,11 +1,9 @@
-import numpy as np
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 
-import dgn.paths as path
-from dgn.utils.torch_utils import RNNChannel, RNNBase, MLPBase
-from dgn.utils.common_utils import get_insert_func, Messages, PassDecisionMotionMessages
+from dgn.utils.torch_utils import RNNChannel, MLPBase
+from dgn.utils.common_utils import Messages, PassDecisionMotionMessages
 
 class DGNBase(pl.LightningModule):
     """
@@ -365,7 +363,7 @@ class PassDecision(pl.LightningModule):
         for t in range(time):
 
             # Add perturbation to hidden states
-            h_p = h_p + torch.randn_like(h_p) * hps.noise_d
+            h_p = h_p + torch.randn_like(h_p) * hps.noise_p
             h_d = h_d + torch.randn_like(h_d) * hps.noise_d
             
             h_p, p_to_d = self.P_area(inp[:,t,:], h_p)

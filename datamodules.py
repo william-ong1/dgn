@@ -1,22 +1,42 @@
 import os
-import torch
-import itertools
 import numpy as np
-import torch.nn as nn
-import seaborn as sns
-import networkx as nx
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 
-from copy import deepcopy
 from torch.utils.data import DataLoader, Dataset, random_split
 from scipy.ndimage import gaussian_filter1d
 
 import dgn.paths as path
-import dgn.utils.visualization_utils as vis
-from dgn.utils.common_utils import PolyRegression
+from dgn.utils.common_utils import generate_noisy_sine_waves
 
-class NoisySources(pl.LightningDataModule):
+class DGNDataModuleBase(pl.LightningDataModule):
+    """
+    Base class for all Data Generating Networks (DGN) DataModules.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+
+    def setup(self, stage=None):
+        raise NotImplementedError("setup must be implemented in subclass!")
+
+    def train_dataloader(self, shuffle: bool = True):
+        return DataLoader(
+            self.train_ds,
+            batch_size=self.hparams.batch_size,
+            shuffle=shuffle,
+            num_workers=16,
+        )
+
+    def val_dataloader(self):
+        return DataLoader(
+            self.val_ds,
+            batch_size=len(self.val_ds),
+            shuffle=False,
+            num_workers=16,
+        )
+
+
+class NoisySources(DGNDataModuleBase):
     def __init__(
         self,
         batch_total: int,
@@ -54,7 +74,7 @@ class NoisySources(pl.LightningDataModule):
 
         if hps.mesg_type == 'sine wave':
             freq = np.random.uniform(0.1, 1.0, size=hps.input_dim)
-            inp = self.generate_noisy_sine_waves(hps.batch_total, hps.time_total, hps.input_dim, freq, noise_level=0.0)
+            inp = generate_noisy_sine_waves(hps.batch_total, hps.time_total, hps.input_dim, freq, noise_level=0.0)
         else:
             
             # Generate white noise
@@ -73,23 +93,8 @@ class NoisySources(pl.LightningDataModule):
         )
         self.train_ds, self.val_ds = random_split(ds, hps.p_split)
         
-    def train_dataloader(self, shuffle=True):
-        return DataLoader(
-            self.train_ds,
-            batch_size = self.hparams.batch_size,
-            shuffle=shuffle,
-            num_workers=16,
-        )
-
-    def val_dataloader(self):
-        return DataLoader(
-            self.val_ds,
-            batch_size = len(self.val_ds),
-            shuffle=False,
-            num_workers=16,
-        )
-    
     def transform(self, x, idx, mesg_type):
+        hps = self.hparams
         if mesg_type == "white noise": # no changes
             pass 
         elif mesg_type == "intg_noise": # performs cumsum
@@ -100,35 +105,9 @@ class NoisySources(pl.LightningDataModule):
         else:
             raise ValueError()
         return x
-    
-    @staticmethod
-    def generate_noisy_sine_waves(batch, time, dim, freq, noise_level=0.1):
-        """
-        Generate noisy sine waves with different frequencies for each dimension.
 
-        Args:
-            batch (int): Number of batches.
-            time (int): Number of time steps.
-            dim (int): Number of dimensions.
-            freq (list): List of frequencies for each dimension.
-            noise_level (float): Level of noise to be added to the sine waves.
 
-        Returns:
-            waves (numpy.ndarray): Array of shape (batch, time, dim) containing the generated noisy sine waves.
-        """
-        waves = np.zeros((batch, time, dim))
-        time_vector = np.arange(time)
-
-        for d in range(dim):
-            for b in range(batch):
-                noise = np.random.normal(scale=noise_level, size=time)
-                phase = np.random.uniform(0, 2 * np.pi)
-                wave = np.sin(freq[d] * time_vector + phase) + noise
-                waves[b, :, d] = wave
-
-        return waves
-
-class LatentDecision(pl.LightningDataModule):
+class LatentDecision(DGNDataModuleBase):
     def __init__(
         self,
         batch_total: int,
@@ -162,7 +141,7 @@ class LatentDecision(pl.LightningDataModule):
             inp = np.random.uniform(-5., 5., size=(hps.batch_total, hps.time_total, hps.input_dim))
         elif hps.mesg_dist == "sine wave":
             freq = np.random.uniform(0.1, 1.0, size=hps.input_dim)
-            inp = self.generate_noisy_sine_waves(hps.batch_total, hps.time_total, hps.input_dim, freq, noise_level=0.5) * 4.
+            inp = generate_noisy_sine_waves(hps.batch_total, hps.time_total, hps.input_dim, freq, noise_level=0.5) * 4.
         else:
             raise ValueError()
             
@@ -224,22 +203,6 @@ class LatentDecision(pl.LightningDataModule):
         )
         self.train_ds, self.val_ds = random_split(ds, hps.p_split)
         
-    def train_dataloader(self, shuffle=True):
-        return DataLoader(
-            self.train_ds,
-            batch_size = self.hparams.batch_size,
-            shuffle=shuffle,
-            num_workers=16,
-        )
-
-    def val_dataloader(self):
-        return DataLoader(
-            self.val_ds,
-            batch_size = len(self.val_ds),
-            shuffle=False,
-            num_workers=16,
-        )
-    
     @staticmethod
     def gen_trajectory_3d(x0, y0, z0, time, v, ctxt):
         sigmoid = lambda x: 1/(1+np.exp(-0.02 * x)) # Uses a scaled sigmoid function
@@ -301,33 +264,6 @@ class LatentDecision(pl.LightningDataModule):
             return np.convolve(data, decay_weights, mode='full')[:len(data)]
 
         return np.apply_along_axis(filter_func, axis, array)
-    
-    @staticmethod
-    def generate_noisy_sine_waves(batch, time, dim, freq, noise_level=0.1):
-        """
-        Generate noisy sine waves with different frequencies for each dimension.
-
-        Args:
-            - batch (int): Number of batches.
-            - time (int): Number of time steps.
-            - dim (int): Number of dimensions.
-            - freq (list): List of frequencies for each dimension.
-            - noise_level (float): Level of noise to be added to the sine waves.
-
-        Returns:
-            - waves (numpy.ndarray): Array of shape (batch, time, dim) containing the generated noisy sine waves.
-        """
-        waves = np.zeros((batch, time, dim))
-        time_vector = np.arange(time)
-
-        for d in range(dim):
-            for b in range(batch):
-                noise = np.random.normal(scale=noise_level, size=time)
-                phase = np.random.uniform(0, 2 * np.pi)
-                wave = np.sin(freq[d] * time_vector + phase) + noise
-                waves[b, :, d] = wave
-
-        return waves
     
     def draw(self, arr):
         batch, time, fea = arr.shape
