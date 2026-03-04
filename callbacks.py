@@ -235,13 +235,15 @@ class ProctorSummaryPlot:
         colors = sns.color_palette("Set2", len(metrics))
         for key, value in metrics.items():
             step_type, name = key.split("/")
+            if ('loss' not in name) and ('acc' not in name): continue # skip if not loss or acc
+            
             is_loss = "loss" in name
             is_valid = step_type == "valid"
             idx = i_valid if is_valid else i_train
             axs[1-int(is_loss)][int(is_valid)].plot(value, label=name, color=colors[idx])
             axs[1-int(is_loss)][int(is_valid)].set_title(step_type)
             if is_loss or self.multiple_acc: axs[1-int(is_loss)][int(is_valid)].legend()
-            
+
             if is_valid: i_valid += 1
             else: i_train += 1
 
