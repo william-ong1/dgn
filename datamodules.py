@@ -75,8 +75,8 @@ class NoisySources(DGNDataModuleBase):
         if hps.mesg_type == 'sine wave':
             freq = np.random.uniform(0.1, 1.0, size=hps.input_dim)
             inp = generate_noisy_sine_waves(hps.batch_total, hps.time_total, hps.input_dim, freq, noise_level=0.0)
-        else:
             
+        else:
             # Generate white noise
             inp = np.random.normal(size=(hps.batch_total, hps.time_total, hps.input_dim))
             
@@ -274,6 +274,47 @@ class LatentDecision(DGNDataModuleBase):
         plt.tight_layout()
         plt.savefig(os.path.join(path.resultpath, "results", "input.png"))
 
+        
+class ContextSources(DGNDataModuleBase):
+    def __init__(
+        self,
+        batch_total: int,
+        time_total: int,
+        input_dim: int,
+        num_ctxt: int,
+        p_switch: list,
+        p_split: list = [0.8, 0.2],
+        batch_size: int = 64,
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+        hps = self.hparams
+        
+        
+    def setup(self, stage=None):
+        hps = self.hparams
+        num_ctxt = hps.num_ctxt
+        ctxt = np.empty((hps.batch_total, hps.time_total, hps.input_dim))
+        
+        ctxt[:, 0] = np.random.choice(num_ctxt, size=(hps.batch_total, hps.input_dim))
+        for t in range(1, hps.time_total):
+            for idim in range(hps.input_dim):
+                p = hps.p_switch[idim]
+                to_switch = np.random.choice([0, 1], p=[1-p, p], size=(hps.batch_total))
+
+                # Trials that don't switch
+                idx = np.where(to_switch == 0)[0]
+                ctxt[idx, t, idim] = ctxt[idx, t-1, idim]
+                
+                # Trials that switch
+                idx = np.where(to_switch == 1)[0]
+                ctxt[idx, t, idim] = np.random.choice(num_ctxt, size=len(idx))
+        
+        ds = BasicDataset(
+            ctxt.astype(np.float32),
+        )
+        self.train_ds, self.val_ds = random_split(ds, hps.p_split)
+        
 class BasicDataset(Dataset):
     def __init__(self, *iter_data, **kwargs):
         self.iter_data = iter_data
