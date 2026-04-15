@@ -6,6 +6,8 @@ defaults:
 
 seed: 0
 run_dir: null
+paths:
+  resultpath: .
 
 trainer:
   _target_: pytorch_lightning.Trainer

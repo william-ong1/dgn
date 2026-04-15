@@ -6,7 +6,6 @@ import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Dataset, random_split
 from scipy.ndimage import gaussian_filter1d
 
-import paths as path
 from utils.common_utils import generate_noisy_sine_waves
 
 class DGNDataModuleBase(pl.LightningDataModule):
@@ -46,6 +45,7 @@ class NoisySources(DGNDataModuleBase):
         batch_size: int = 64,
         mesg_type: str = "white noise",
         mesg_kwargs: dict = {},
+        resultpath: str = ".",
         
         cumsum: bool = False, # legacy feature, to be removed
     ):
@@ -121,6 +121,7 @@ class LatentDecision(DGNDataModuleBase):
         mesg_dist: str = "normal",
         binary_decision: bool = False,
         sig_smooth: float = None,
+        resultpath: str = ".",
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -272,7 +273,9 @@ class LatentDecision(DGNDataModuleBase):
             for b in range(4):
                 axs[i, b].plot(arr[b, :, i], "b")
         plt.tight_layout()
-        plt.savefig(os.path.join(path.resultpath, "results", "input.png"))
+        out_dir = os.path.join(self.hparams.resultpath, "results")
+        os.makedirs(out_dir, exist_ok=True)
+        plt.savefig(os.path.join(out_dir, "input.png"))
 
 class BasicDataset(Dataset):
     def __init__(self, *iter_data, **kwargs):

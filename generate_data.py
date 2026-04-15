@@ -18,6 +18,24 @@ def _register_resolvers(project_root: Path) -> None:
     )
 
 
+def _archive_run_configs(
+    *,
+    run_dir_path: Path,
+    cfg_dir: Path,
+) -> None:
+    archive_root = run_dir_path / "configs"
+    archive_root.mkdir(parents=True, exist_ok=True)
+
+    # Copy files from the experiment config folder.
+    for file_path in cfg_dir.rglob("*"):
+        if not file_path.is_file():
+            continue
+        rel_path = file_path.relative_to(cfg_dir)
+        destination_path = archive_root / rel_path
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(file_path, destination_path)
+
+
 def run_experiment(
     config: str,
     overrides: list[str] | None = None,
@@ -39,6 +57,10 @@ def run_experiment(
     if target_run_dir:
         run_dir_path = Path(target_run_dir).expanduser().resolve()
         run_dir_path.mkdir(parents=True, exist_ok=True)
+        _archive_run_configs(
+            run_dir_path=run_dir_path,
+            cfg_dir=cfg_dir,
+        )
         os.chdir(run_dir_path)
 
     exp_seed = seed if seed is not None else config_obj.get("seed", None)

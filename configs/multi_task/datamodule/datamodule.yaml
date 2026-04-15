@@ -17,3 +17,4 @@ train_type: curriculum_ratio
 train_type_kwargs:
   persist: 1
   final_ratio: [1, 1]
+resultpath: ${paths.resultpath}
