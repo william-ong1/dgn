@@ -1,0 +1,9 @@
+_target_: datamodules.NoisySources
+
+batch_total: 2048
+time_total: 200
+input_dim: ${model.ranks}
+
+p_split:
+  - 0.5
+  - 0.5

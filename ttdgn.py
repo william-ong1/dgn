@@ -18,11 +18,11 @@ import matplotlib.pyplot as plt
 from itertools import permutations
 from torch.utils.data import DataLoader
 
-import dgn.utils.visualization_utils as vis
-from dgn.utils.torch_utils import RNNChannel
-from dgn.datamodules import BasicDataset
-from dgn.utils.common_utils import Messages, get_insert_func
-from dgn.models import VariableNoise
+import utils.visualization_utils as vis
+from utils.torch_utils import RNNChannel
+from datamodules import BasicDataset
+from utils.common_utils import Messages, get_insert_func
+from models import VariableNoise
 
 pi = np.pi
 SAVE_DIR = "./graphs/"
@@ -599,14 +599,14 @@ class MultiTaskNet(pl.LightningModule):
         self.noise_weight_generator = VariableNoise(
             self.hparams.noise,
             hps.num_areas * hps.hidden_size,
-            device = 'cuda',
+            device = noise_device,
             off = (self.hparams.noise_type == 'fixed'),
         )
         assert self.hparams.channel_noise_type in ['fixed', 'variable']
         self.cnoise_weight_generator = VariableNoise(
             self.hparams.channel_noise,
             sum_nested(hps.total_mesgs),
-            device = 'cuda',
+            device = noise_device,
             off = (self.hparams.channel_noise_type == 'fixed'),
         )
         self.h_noise_weight = torch.ones(hps.hidden_size, hps.num_areas).to(self.device) * hps.noise

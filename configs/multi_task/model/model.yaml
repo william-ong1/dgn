@@ -1,0 +1,42 @@
+_target_: ttdgn.MultiTaskNet
+angle_scale: 1
+delay: 5
+diagram:
+  - - A0
+    - A1
+    - '0'
+  - - A0
+    - A2
+    - '0'
+  - - A1
+    - A2
+    - '0'
+  - - A2
+    - A0
+    - '0'
+  - - A2
+    - A3
+    - '1'
+  - - A2
+    - A3
+    - '2'
+hidden_size: 64
+noise: 0.01
+noise_type: 'fixed'
+channel_noise: 0.01
+channel_noise_type: 'fixed'
+
+num_areas: 3
+num_channels: 4
+num_angles: 20
+
+sacc_output_areas:
+  - A2
+sacc_scale: 0.1
+
+stim_input_areas:
+  - A0
+  - A0
+  - A0
+  - A0
+task_names: ${datamodule.task_names}

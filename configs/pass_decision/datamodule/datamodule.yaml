@@ -1,0 +1,16 @@
+_target_: datamodules.LatentDecision
+
+batch_total: 2048
+time_total: 200
+hidden_size: ${model.hidden_size}
+
+p_split:
+  - 0.8
+  - 0.2
+
+batch_size: 64
+lag: ${model.lag}
+mesg_dist: "normal"
+binary_decision: ${model.binary_output}
+decay_factor: 1.0
+latent_factor: 1.0

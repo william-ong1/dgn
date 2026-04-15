@@ -1,0 +1,10 @@
+on_epoch_end_calls:
+  _target_: callbacks.OnEpochEndCalls
+  callbacks:
+    - _target_: callbacks.Log
+    - _target_: callbacks.HistoryPlot
+      log_every_n_epochs: 10
+    - _target_: callbacks.SaveAsH5
+      log_every_n_epochs: 10
+      ground_truth:
+        - "inp"

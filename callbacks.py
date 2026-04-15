@@ -8,7 +8,7 @@ import seaborn as sns
 
 from copy import deepcopy
 
-import dgn.utils.visualization_utils as vis
+import utils.visualization_utils as vis
 
 SAVE_DIR = "./graphs/"
 

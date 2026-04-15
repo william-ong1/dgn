@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 
-from dgn.utils.torch_utils import RNNChannel, MLPBase
-from dgn.utils.common_utils import Messages, PassDecisionMotionMessages
+from utils.torch_utils import RNNChannel, MLPBase
+from utils.common_utils import Messages, PassDecisionMotionMessages
 
 class DGNBase(pl.LightningModule):
     """
@@ -144,14 +144,14 @@ class MemoryNetwork(DGNBase):
         self.noise_weight_generator = VariableNoise(
             self.hparams.noise,
             hps.num_areas * hps.hidden_size,
-            device = 'cuda',
+            device = 'cpu',
             off = (self.hparams.noise_type == 'fixed'),
         )
         assert self.hparams.channel_noise_type in ['fixed', 'variable']
         self.cnoise_weight_generator = VariableNoise(
             self.hparams.channel_noise,
             hps.total_mesgs,
-            device = 'cuda',
+            device = 'cpu',
             off = (self.hparams.channel_noise_type == 'fixed'),
         )
         self.h_noise_weight = torch.ones(hps.num_areas * hps.hidden_size).to(self.device) * hps.noise
@@ -458,7 +458,7 @@ class PassDecision(pl.LightningModule):
     def init_weight(pm): nn.init.normal_(pm, mean=0.0, std=1.0)
             
 class VariableNoise:
-    def __init__(self, init_noise, feature_dim, ema_decay=0.99, device='cuda', off=False):
+    def __init__(self, init_noise, feature_dim, ema_decay=0.99, device='cpu', off=False):
         self.init_noise = float(init_noise)
         self.feature_dim = feature_dim
         self.ema_decay = ema_decay
@@ -496,125 +496,3 @@ class VariableNoise:
         scaled_noise = self.ema_norm * self.noise_dist
         return scaled_noise
     
-    
-class ContextualRotation(DGNBase):
-    def __init__(
-        self,
-        num_ctxt: int,
-        f_x: dict,                    # area_name: {ctxt: A}
-        f_u: dict,                    # tar: {src: {ctxt: B}}
-        g_per_ctxt: bool = True,      # different projection per context
-        lag: int = 2,
-        noise_d: float = 0.0,
-        noise_p: float = 0.0,
-        hidden_size: int = 64,
-        lr: float = 4.0e-3,
-    ):
-        super().__init__()
-        self.save_hyperparameters(ignore=['f_x', 'f_u'])
-        hps = self.hparams
-        self.area_names = list(f_x.keys())
-        
-        # Setup A
-        hps.f_x = {}
-        for an, Adict in f_x.items():
-            hps.f_x[an] = {c: torch.Tensor(v).to(self.device) for c, v in Adict.items()}
-        
-        # Setup B
-        hps.f_u = {}
-        for tar in self.area_names:
-            if tar in hps.f_u.keys():
-                hps.f_u[tar] = {}
-                for src, Bdict in hps.f_u[tar].items():
-                    hps.f_u[tar][src] = {c: torch.Tensor(v).to(self.device) for c, v in Bdict.items()}
-            else:
-                hps.f_u[tar] = {}
-                
-        # Setup projection matrix g
-        self.g = {}
-        for an in self.area_names:
-            self.g[an] = {
-                c: 4*torch.rand(hps.hidden_size, 2, device=self.device)+1 for c in range(hps.num_ctxt)
-            } # projection strength: [1,5)
-            
-        self.placeholder = nn.Linear(1, 1)
-        
-    def forward(
-        self,
-        batch,
-    ):
-        hps = self.hparams
-        (ctxt,) = batch
-        
-        batch_dim, time_dim = ctxt.shape[:2]
-        na = len(self.area_names)
-        device = self.device
-        
-        # Storage
-        x = torch.randn(na, batch_dim, 2, dtype=torch.float32, device=device)
-        self.latents = {
-            an: torch.empty(batch_dim, time_dim, 2, device=device)
-            for an in self.area_names
-        }
-        self.hidden_states = {
-            an: torch.empty(batch_dim, time_dim, hps.hidden_size, device=device)
-            for an in self.area_names
-        }
-        
-        for t in range(time_dim):
-            c = ctxt[:, t, 0] # shape = (batch,)
-            
-            for ia, area_name in enumerate(self.area_names):
-                
-                # Evolve
-                Adict = hps.f_x[area_name]
-                A_c = self._get_matrix_by_context(c, Adict, batch_dim)
-                x_next = torch.bmm(A_c, x[ia].unsqueeze(-1)).squeeze(-1)
-                
-                # Add input
-                for src, Bdict in hps.f_u[area_name].items():
-                    
-                    isrc = int(src[1:])
-                    if hps.lag == 0:
-                        x_src = x[isrc]
-                    elif t >= hps.lag:
-                        x_src = self.latents[src][:, t-hps.lag]
-                    else:
-                        x_src = torch.zeros_like(x[isrc])
-                    B_c = self._get_matrix_by_context(c, Bdict, batch_dim)
-                    x_next += torch.bmm(B_c, x_src.unsqueeze(-1)).squeeze(-1)
-                    
-                # Add noise
-                x_next += hps.noise_d * torch.randn_like(x_next)
-                
-                # Get projection
-                gdict = self.g[area_name]
-                g_c = self._get_matrix_by_context(c, gdict, batch_dim, output_dim=hps.hidden_size)
-                h = torch.bmm(g_c, x_next.unsqueeze(-1)).squeeze(-1)
-                h +=  hps.noise_p * torch.randn_like(h)
-                
-                # Store
-                self.latents[area_name][:, t] = x_next
-                self.hidden_states[area_name][:, t] = h
-                
-            x = torch.stack(
-                [self.latents[an][:, t] for an in self.area_names],
-                dim=0
-            )
-                
-    def _shared_step(self, batch, step_type):
-        hps = self.hparams
-        self.current_batch, self.current_info = batch
-        
-        # Forward pass
-        self.forward(self.current_batch)
-        return None
-    
-    def _get_matrix_by_context(self, ctxt, Mdict, batch_dim, output_dim=2):
-        hps = self.hparams
-        M_c = torch.empty(batch_dim, output_dim, 2, device=self.device)
-        for nc in range(hps.num_ctxt):
-            idx_c = (ctxt == nc)
-            if sum(idx_c) > 0:
-                M_c[idx_c] = Mdict[nc].to(self.device)
-        return M_c

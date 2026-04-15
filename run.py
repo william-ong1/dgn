@@ -1,7 +1,7 @@
 import os
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
-from dgn.utils.common_utils import check_pattern
+from utils.common_utils import check_pattern
 
 def search(
     datapath: str,
