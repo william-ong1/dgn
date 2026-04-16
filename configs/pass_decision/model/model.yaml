@@ -1,15 +1,7 @@
 _target_: models.PassDecision
 
-hidden_size: 64
-output_size: 64
+hidden_size: ${datamodule.hidden_size}
+lag: ${datamodule.lag}
 
-lag: 1
-noise_p: 0.03
-noise_d: 0.03
-
-p_to_d_coef: 1.0
-rep_coef: 0.1
-binary_output: true
-rnn_nonlinearity: tanh
-
-lr: 4.0e-3
+noise_p: 0.01
+noise_d: 0.01

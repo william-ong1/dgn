@@ -329,7 +329,7 @@ class MemoryNetwork(DGNBase):
         for area_name in self.areas:
             self.hidden_states[area_name] = torch.zeros(batch_size, time, hps.hidden_size).to(self.device)
             
-class PassDecision(pl.LightningModule):
+class PassDecision(DGNBase):
     def __init__(
         self,
         noise_p: float = 0.0,
@@ -349,6 +349,7 @@ class PassDecision(pl.LightningModule):
         # Fixed hps
         hps.input_dim = 2
         hps.channel_size = 2
+        hps.output_size = hps.hidden_size
         
         # Pass area: input + latent (dim=1)
         self.P_area = RNNChannel(hps.input_dim, hps.hidden_size, [hps.input_dim], 
