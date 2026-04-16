@@ -1,4 +1,4 @@
-_target_: ttdgn.MultiTaskNet
+_target_: models.MultiTaskNet
 angle_scale: 1
 delay: 5
 diagram:

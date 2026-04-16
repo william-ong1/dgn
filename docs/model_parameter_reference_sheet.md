@@ -76,7 +76,7 @@ Optional:
 
 ### TTDGN / Multi-task reference (`ttdgn`)
 
-#### Multi-task model (`ttdgn.MultiTaskNet`)
+#### Multi-task model (`models.MultiTaskNet`)
 
 Required:
 - `num_areas` (int): number of recurrent areas
@@ -109,7 +109,7 @@ Critical note:
   - `perc_conns` (fraction of possible edges)
   - `shortest` (max path length constraint from stimulus-input areas to output sub-area)
 
-#### Multi-task data module (`ttdgn.MultiTask`)
+#### Multi-task data module (`datamodules.MultiTask`)
 
 Required:
 - `task_names` (list): task names from `task_map`

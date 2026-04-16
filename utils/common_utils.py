@@ -8,6 +8,41 @@ from sklearn.metrics import r2_score
 from sklearn.linear_model import Ridge, Lasso
 
 flatten = lambda arr: arr.reshape(-1, arr.shape[-1])
+SAVE_DIR = "./graphs/"
+sigmoid = lambda x: 1 / (1 + np.exp(-x))
+
+
+def normalize(theta):
+    """Convert any angle into the interval [-pi, pi]."""
+    return np.arctan2(np.sin(theta), np.cos(theta))
+
+
+def normalize_torch(theta):
+    return torch.arctan2(torch.sin(theta), torch.cos(theta))
+
+
+def sum_nested(arr):
+    """Sum uneven nested arrays."""
+    total = 0
+    for item in arr:
+        total += sum(item)
+    return total
+
+
+def categorize(data, itvl, num_angles):
+    """Digitalize data into num_angles categories within itvl."""
+    bins = torch.linspace(*itvl, num_angles + 1).to(data.device)
+    return (torch.bucketize(data, bins) - 1).reshape(*data.shape)
+
+
+def one_hot_encode(data, itvl, num_angles):
+    """One-hot encode data with num_angles categories within itvl."""
+    if num_angles is None:
+        num_angles = int(torch.max(data)) + 1
+    data = categorize(data, itvl, num_angles)
+    one_hot = torch.zeros(data.shape[:-1] + (num_angles,)).to(data.device)
+    one_hot[torch.arange(data.shape[0])[:, None], torch.arange(data.shape[1]), data.squeeze()] = 1
+    return one_hot
 
 def check_pattern(string, patterns):
     if len(patterns) == 0: return True

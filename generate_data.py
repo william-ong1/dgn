@@ -77,8 +77,8 @@ def run_experiment(
         gradient_clip_val=0.5,
         gradient_clip_algorithm="value",
         num_sanity_val_steps=0,
-        # accelerator="auto",
-        # devices="auto",
+        accelerator="auto",
+        devices="auto",
     )
 
     trainer.fit(model=model, datamodule=datamodule)
