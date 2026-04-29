@@ -90,6 +90,10 @@ class NoisySources(DGNDataModuleBase):
             for idim, mtype in enumerate(hps.mesg_type): 
                 inp = self.transform(inp, idim, mtype)
         
+        if hps.sig_smooth:
+            inp = gaussian_filter1d(inp, sigma=hps.sig_smooth, axis=1)
+            self.draw(inp)
+
         ds = BasicDataset(
             inp.astype(np.float32),
         )

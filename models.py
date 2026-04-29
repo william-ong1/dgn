@@ -3,6 +3,7 @@ import torch.nn as nn
 import pytorch_lightning as pl
 import os
 import random
+import math
 import numpy as np
 import seaborn as sns
 import networkx as nx
@@ -27,6 +28,21 @@ class DGNBase(pl.LightningModule):
     def __init__(self, *args, **kwargs):
         super().__init__()
         self.save_hyperparameters()
+
+    def _scale_gru_input_weights_by_var(self) -> None:
+        """
+        Scale GRUCell/RNNCell input weights (weight_ih) to increase variance.
+
+        """
+        var_scale = float(getattr(self.hparams, "input_weight_init_var_scale", 1.0))
+        if var_scale == 1.0:
+            return
+        std_scale = math.sqrt(var_scale)
+
+        with torch.no_grad():
+            for m in self.modules():
+                if isinstance(m, (nn.GRUCell, nn.RNNCell)):
+                    m.weight_ih.mul_(std_scale)
         
     def forward(self, *args, **kwargs):
         raise NotImplementedError('forward function must be implemented in subclass!')
@@ -70,6 +86,7 @@ class MemoryNetwork(DGNBase):
         ext_input_dim: int = 0,
         ext_input_amp: int = -1,
         ext_input_perc: float = 0.0,
+        input_weight_init_var_scale: float = 1.0,
     ):
         """
         Args:
@@ -171,6 +188,10 @@ class MemoryNetwork(DGNBase):
         )
         self.h_noise_weight = torch.ones(hps.num_areas * hps.hidden_size).to(self.device) * hps.noise
         self.c_noise_weight = torch.ones(hps.total_mesgs).to(self.device) * hps.channel_noise
+
+        # Per instructions: for TT-DGN training, increase the variance of the
+        # RNN input weights (stimulus + communication inputs).
+        self._scale_gru_input_weights_by_var()
         
     def forward(self, inp, step_type):
         hps = self.hparams
@@ -341,6 +362,7 @@ class PassDecision(DGNBase):
         binary_output: bool = True,
         rnn_nonlinearity: str = "tanh",
         lr: float = 4.0e-3,
+        input_weight_init_var_scale: float = 1.0,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -367,6 +389,9 @@ class PassDecision(DGNBase):
         
         # Enforce representations of u in D
         self.D_decoder = MLPBase([[hps.hidden_size, hps.input_dim, None]])
+
+        # Increase variance of the RNN input weights.
+        self._scale_gru_input_weights_by_var()
         
     def forward(self, inp, latent, go, ctxt, step_type):
         hps = self.hparams
@@ -542,6 +567,7 @@ class MultiTaskNet(DGNBase):
         sacc_output_areas: list = None,   # areas that are required to saccade, defaults to output area only
         stim_input_areas: list = None,    # areas that receive inputs=(fix, stim1, stim2), defaults to A0 if unspecified
         graph_kwargs: dict = {},
+        input_weight_init_var_scale: float = 1.0,
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["task_names"])
@@ -594,6 +620,9 @@ class MultiTaskNet(DGNBase):
         )
         self.h_noise_weight = torch.ones(hps.hidden_size, hps.num_areas).to(self.device) * hps.noise
         self.c_noise_weight = torch.ones(sum_nested(hps.total_mesgs)).to(self.device) * hps.channel_noise
+
+        # Increase variance of the RNN input weights.
+        self._scale_gru_input_weights_by_var()
         
     def forward(self, inp, step_type):
         hps = self.hparams
