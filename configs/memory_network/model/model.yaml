@@ -1,9 +1,9 @@
 _target_: models.MemoryNetwork
 
 ranks:
-  - 2
-  - 3
-  - 4
+  - 1
+  - 1
+  - 1
 
 connectome:
   - [1, 0, 1]
@@ -11,8 +11,8 @@ connectome:
   - [0, 1, 1]
 
 hidden_size: 64
-memory: 5
+memory: 2
 noise: 0.05
 channel_noise: 0.01
 lag: 2
-input_weight_init_var_scale: 1.0
+input_weight_init_var_scale: 1.5

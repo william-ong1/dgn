@@ -5,3 +5,4 @@ lag: ${datamodule.lag}
 
 noise_p: 0.01
 noise_d: 0.01
+input_weight_init_var_scale: 1.5
