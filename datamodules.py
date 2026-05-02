@@ -1,11 +1,10 @@
-import os
 import numpy as np
-import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 
 from torch.utils.data import DataLoader, Dataset, random_split
 from scipy.ndimage import gaussian_filter1d
 from utils.common_utils import generate_noisy_sine_waves
+from utils.visualization_utils import plot_input_samples
 
 
 class DGNDataModuleBase(pl.LightningDataModule):
@@ -63,8 +62,8 @@ class NoisySources(DGNDataModuleBase):
         batch_size: int = 64,
         mesg_type: str = "white noise",
         mesg_kwargs: dict = {},
-        resultpath: str = ".",
         sig_smooth: float = None,
+        resultpath: str = ".",
     ):
         """
         Args:
@@ -79,6 +78,8 @@ class NoisySources(DGNDataModuleBase):
                 'white noise', 'intg noise', 'filter noise' or 'sine wave'.
                 See `transform()` function for each option.
             mesg_kwargs: Corresponding kwargs for the chosen `mesg_type`.
+            sig_smooth: Standard deviation for Gaussian smoothing.
+            resultpath: Path to save the results.
         """
         super().__init__()
         self.save_hyperparameters()
@@ -112,7 +113,7 @@ class NoisySources(DGNDataModuleBase):
         # Apply smoothing if specified
         if hps.sig_smooth:
             inp = gaussian_filter1d(inp, sigma=hps.sig_smooth, axis=1)
-            self.draw(inp)
+            plot_input_samples(inp, hps.resultpath)
 
         # Construct the dataset and split into train and validation sets
         ds = BasicDataset(
@@ -123,6 +124,14 @@ class NoisySources(DGNDataModuleBase):
     def transform(self, x, idx, mesg_type):
         """
         Transform the input according to the message type.
+
+        Args:
+            x (numpy.ndarray): Input array.
+            idx (int): Index of the input dimension to transform.
+            mesg_type (str): Message type.
+
+        Returns:
+            x (numpy.ndarray): Transformed input array.
         """
         hps = self.hparams
         if mesg_type == "white noise": # no changes
@@ -138,21 +147,39 @@ class NoisySources(DGNDataModuleBase):
 
 
 class LatentDecision(DGNDataModuleBase):
+    """
+    DataModule for generating latent decision, used with the `PassDecision` model.
+    """
     def __init__(
         self,
         batch_total: int,
         time_total: int,
-        hidden_size: int,
-        decay_factor: float = 1.,
-        latent_factor: float = 1.,
+        decay_factor: float = 1.0,
+        latent_factor: float = 1.0,
         p_split: list = [0.8, 0.2],
         batch_size: int = 64,
-        lag: int = False,
+        lag: int = 0,
         mesg_dist: str = "normal",
         binary_decision: bool = False,
         sig_smooth: float = None,
         resultpath: str = ".",
     ):
+        """
+        Args:
+            batch_total: Total number of batches (trials).
+            time_total: Total number of time steps.
+            decay_factor: Decay factor for latent signal filtering.
+            latent_factor: Factor for latent signal amplitude scaling.
+            p_split: Train/validation split percentage, must sum up to 1.
+            batch_size: Size of each training batch. Validation batch size is always
+                the total number of validation batches.
+            lag: Time-step lag for trajectory generation alignment.
+            mesg_dist: Distribution type for input signal. Options are:
+                'normal', 'exponential', 'uniform', 'sine wave'.
+            binary_decision: Whether to generate binary-style decision trajectories.
+            sig_smooth: Standard deviation for Gaussian smoothing.
+            resultpath: Path to save the results.
+        """
         super().__init__()
         self.save_hyperparameters()
         assert time_total >= 200 # latest cue time 150, smallest action time 50
@@ -162,8 +189,12 @@ class LatentDecision(DGNDataModuleBase):
         hps.input_dim = 2
         
     def setup(self, stage=None):
+        """
+        Setup the dataset and split into train and validation sets.
+        """
         hps = self.hparams
 
+        # Generate input signals
         if hps.mesg_dist == "normal":
             inp = np.random.normal(size=(hps.batch_total, hps.time_total, hps.input_dim)) * 3
         elif hps.mesg_dist == "exponential":
@@ -174,14 +205,18 @@ class LatentDecision(DGNDataModuleBase):
             freq = np.random.uniform(0.1, 1.0, size=hps.input_dim)
             inp = generate_noisy_sine_waves(hps.batch_total, hps.time_total, hps.input_dim, freq, noise_level=0.5) * 4.
         else:
-            raise ValueError()
-            
+            raise ValueError(f"Invalid message distribution: {hps.mesg_dist}")
+        
+        # Apply smoothing if specified
         if hps.sig_smooth:
             inp = gaussian_filter1d(inp, sigma=hps.sig_smooth, axis=1)
-            self.draw(inp)
+            plot_input_samples(inp, hps.resultpath)
             
+        # Generate latent signal 
         latent = np.random.normal(size=(hps.batch_total, hps.time_total, 1))
         latent = self.exponential_filter(latent, hps.decay_factor, 1) * hps.latent_factor
+
+        # Generate decision signal
         dec = np.cumsum(inp, axis=1)
         
         # Random sample go time, go cue duration = 10
@@ -190,20 +225,19 @@ class LatentDecision(DGNDataModuleBase):
         for b, go_time in enumerate(go_times):
             go[b, go_time: go_time + 10, 0] = np.ones(10)
             
-        # Get context (at the start of the trial, 10-20 timestep)
+        # Generate context signal (at the start of the trial, 10-20 timestep)
         ctxt = np.zeros((hps.batch_total, hps.time_total, 1))
         for b, go_time in enumerate(go_times):
             ctxt[b, 10:20, 0] = np.ones(10) * np.random.choice([1, -1])
-            
-        # Generate rotation matrix, where R.T is inverse rotation matrix
-        # R = self.gen_random_rotation_matrix(hps.hidden_size)
         
         # Generate trajectories
         action = np.zeros((hps.batch_total, hps.time_total, 3))
         ang_velocity = np.pi / (hps.time_total - 100) # doesn't turn more than half a circle (pi)
-        lag = 0 if not hps.lag else hps.lag
+
+        lag = hps.lag
         for b in range(hps.batch_total):
             
+            # Generate trajectory for continuous decision
             if not hps.binary_decision:
                 traj = self.gen_trajectory_3d(
                     *dec[b, go_times[b] - lag],
@@ -212,7 +246,7 @@ class LatentDecision(DGNDataModuleBase):
                     ang_velocity,
                     np.sign(ctxt[b].mean()),
                 )
-            else:
+            else: # generate trajectory for binary decision
                 traj = self.gen_trajectory_3d(
                     * np.sign(dec[b, go_times[b] - lag]) * 3, # amplitude=3
                     0,                                        # does not use latent
@@ -221,30 +255,47 @@ class LatentDecision(DGNDataModuleBase):
                     np.sign(ctxt[b].mean()),
                 )
                 
-            traj_embed = np.pad(traj, ((go_times[b], 0), (0,0)), mode="constant", constant_values=0) # shape = (total time, hidden size)
+            # Pad trajectory with zeros to match total time
+            traj_embed = np.pad(traj, ((go_times[b], 0), (0,0)), mode="constant", constant_values=0)
             action[b] = traj_embed
         
+        # Construct the dataset and split into train and validation sets
         ds = BasicDataset(
             inp.astype(np.float32), 
             latent.astype(np.float32), 
             go.astype(np.float32), 
             ctxt.astype(np.float32), 
             action.astype(np.float32), 
-            # R=R.astype(np.float32),
         )
         self.train_ds, self.val_ds = random_split(ds, hps.p_split)
         
     @staticmethod
     def gen_trajectory_3d(x0, y0, z0, time, v, ctxt):
-        sigmoid = lambda x: 1/(1+np.exp(-0.02 * x)) # Uses a scaled sigmoid function
+        """
+        Generate the 3D trajectory points for a decision signal.
+
+        Args:
+            x0 (float): x dimension of the decision signal.
+            y0 (float): y dimension of the decision signal.
+            z0 (float): z dimension of the decision signal.
+            time (int): time steps.
+            v (float): angular velocity.
+            ctxt (int): context signal.
+
+        Returns:
+            traj (numpy.ndarray): 3D trajectory points (time, 3)
+        """
+        sigmoid = lambda x: 1/(1+np.exp(-0.02 * x)) # scaled sigmoid function
         
-        if ctxt == 1:
+        # Calculate radius and signs
+        if ctxt == 1: # use x dimension
             r = sigmoid(np.sqrt(x0**2 + z0**2))
             sign = np.sign(x0)
-        else:
+        else: # use y dimension
             r = sigmoid(np.sqrt(y0**2 + z0**2))
             sign = np.sign(y0)
 
+        # Calculate angles
         angles = np.arange(0, time) * v
         phi0 = (1-sign) * np.pi / 2
 
@@ -255,32 +306,17 @@ class LatentDecision(DGNDataModuleBase):
         else:
             y_traj = r * np.cos(phi0 + angles)
             x_traj = np.zeros_like(y_traj)
-            
+        
+        # Calculate z dimension
         z_traj = r * np.sin(phi0 + angles)
         traj = np.vstack([x_traj, y_traj, z_traj])
         
         return traj.T
     
     @staticmethod
-    def gen_random_rotation_matrix(n):
-        # Generate a random vector in n-dimensional space
-        v = np.random.rand(n)
-
-        # Construct skew-symmetric matrix
-        V = np.zeros((n, n))
-        for i in range(n):
-            for j in range(i + 1, n):
-                V[i, j] = -v[j]
-                V[j, i] = v[j]
-
-        # Generate rotation matrix using Cayley transform
-        R = np.eye(n) + 2 * np.dot(np.linalg.inv(np.eye(n) - V), V)
-
-        return R
-    
-    @staticmethod
     def exponential_filter(array, alpha, axis):
-        """Apply a decaying exponential filter to an array along a specified dimension.
+        """
+        Apply a decaying exponential filter to an array along a specified dimension.
 
         Args:
             array (numpy.ndarray): Input array.
@@ -295,14 +331,3 @@ class LatentDecision(DGNDataModuleBase):
             return np.convolve(data, decay_weights, mode='full')[:len(data)]
 
         return np.apply_along_axis(filter_func, axis, array)
-    
-    def draw(self, arr):
-        batch, time, fea = arr.shape
-        fig, axs = plt.subplots(fea, 4, figsize=(10, 3*fea))
-        for i in range(fea):
-            for b in range(4):
-                axs[i, b].plot(arr[b, :, i], "b")
-        plt.tight_layout()
-        out_dir = os.path.join(self.hparams.resultpath, "results")
-        os.makedirs(out_dir, exist_ok=True)
-        plt.savefig(os.path.join(out_dir, "input.png"))
