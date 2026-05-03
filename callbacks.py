@@ -33,6 +33,9 @@ class OnEpochStartCalls(pl.Callback):
             # Use log if present as kwargs
             if callback.name == "log": kwargs["metrics"] = callback.metrics
                 
+            if step_type in callback.run_steps:
+                callback.run(trainer, pl_module, **kwargs)
+
     def on_train_epoch_start(self, trainer, pl_module):
         self.run(trainer, pl_module, "train")
             
@@ -58,12 +61,43 @@ class OnEpochEndCalls(pl.Callback):
         for i, callback in enumerate(self.callbacks):
             # Use log if present as kwargs
             if callback.name == "log": kwargs["metrics"] = callback.metrics
-                
+
+            if step_type in callback.run_steps:
+                callback.run(trainer, pl_module, **kwargs)
+
     def on_train_epoch_end(self, trainer, pl_module):
         self.run(trainer, pl_module, "train")
             
     def on_validation_epoch_end(self, trainer, pl_module):
         self.run(trainer, pl_module, "valid")
+        
+
+class Log:
+    """
+    Keeps a running history of train/validation metrics so other callbacks can plot or
+    summarize how the run is progressing.
+    """
+    def __init__(
+        self,
+        run_steps: list = ["train", "valid"]
+    ):
+        self.name = "log"
+        self.run_steps_count = 0
+        self.run_steps = run_steps
+        self.run_steps_copy = deepcopy(run_steps)
+        self.metrics = {}
+    
+    def run(self, trainer, pl_module, **kwargs):
+        if len(self.run_steps_copy) > 0:
+            try:
+                self.run_steps_copy.remove(kwargs["step_type"])
+                for key in trainer.logged_metrics.keys():
+                    self.metrics[key] = []
+            except:
+                pass
+        
+        for key, value in trainer.logged_metrics.items():
+            self.metrics[key].append(value.item())
         
 
 class SaveAsH5:
@@ -125,34 +159,6 @@ class SaveAsH5:
                         h5ds = group.create_dataset(f'inputs-{area_name}', data=arr.cpu().detach().numpy())
                         h5ds.attrs["type"] = "inputs"
 
-
-class Log:
-    """
-    Keeps a running history of train/validation metrics so other callbacks can plot or
-    summarize how the run is progressing.
-    """
-    def __init__(
-        self,
-        run_steps: list = ["train", "valid"]
-    ):
-        self.name = "log"
-        self.run_steps_count = 0
-        self.run_steps = run_steps
-        self.run_steps_copy = deepcopy(run_steps)
-        self.metrics = {}
-    
-    def run(self, trainer, pl_module, **kwargs):
-        if len(self.run_steps_copy) > 0:
-            try:
-                self.run_steps_copy.remove(kwargs["step_type"])
-                for key in trainer.logged_metrics.keys():
-                    self.metrics[key] = []
-            except:
-                pass
-        
-        for key, value in trainer.logged_metrics.items():
-            self.metrics[key].append(value.item())
-        
 
 class HistoryPlot:
     """
