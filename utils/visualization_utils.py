@@ -2,7 +2,6 @@ import os
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-# ========== Simple functions ========== #
 
 def common_col_title(fig, titles, shape):
     """Put a common `title` on the columns of figure `fig`.
@@ -18,6 +17,7 @@ def common_col_title(fig, titles, shape):
         plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False)
         ax.set_title(titles[n])
         
+
 def common_col_xlabel(fig, xlabels, shape):
     """Put a common `xlabel` on the columns of figure `fig`.
     
@@ -31,6 +31,7 @@ def common_col_xlabel(fig, xlabels, shape):
         ax = fig.add_subplot(N1, N2, (N1-1)*N2 + n+1, frameon=False)
         plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False)
         ax.set_xlabel(xlabels[n])
+
 
 def common_row_ylabel(fig, ylabels, shape):
     """Put a common `ylabel` on the rows of figure `fig`.
@@ -46,6 +47,7 @@ def common_row_ylabel(fig, ylabels, shape):
         plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False)
         ax.set_ylabel(ylabels[n])
 
+
 def common_label(fig, xlabel, ylabel):
     """Put a common `xlabel` and `ylabel` on the figure `fig`.
     
@@ -58,7 +60,8 @@ def common_label(fig, xlabel, ylabel):
     plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
-    
+
+
 def color_time(ax, x, cmap="viridis"):
     """Colors the (`x`, `y`, *`z`) trajectory by time on the axis `ax`.
     
@@ -71,27 +74,7 @@ def color_time(ax, x, cmap="viridis"):
     for t in range(T):
         ax.plot(*x[:, t:t+2], color=color[t], alpha=0.5, marker="")
         
-def set_xylabel(ax, xlabel, ylabel):
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-        
-def set_invisible(ax, rm_all=False):
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    if rm_all:
-        ax.spines['left'].set_visible(False)
-        ax.spines['bottom'].set_visible(False)
-        
-def rm_ticklabels(ax, rm_ticks=True, rm_labels=True):
-    if rm_ticks:
-        ax.set_xticks([])
-        ax.set_yticks([])
-    if rm_labels:
-        ax.tick_params(axis='both', which='both', bottom=False, top=False, left=False, right=False, labelbottom=False, labelleft=False)
-        
-def mkfile(*args):
-    os.makedirs(os.path.join(*args), exist_ok=True)
-        
+
 def savefig(figname="temp.png", clear=True, close=False, dpi=200, folders=[]):
     """Saves figure.
     
@@ -108,9 +91,16 @@ def savefig(figname="temp.png", clear=True, close=False, dpi=200, folders=[]):
     if clear: plt.clf()
     if close: plt.close("all")
         
-# ========== Plots ========== #
 
 def fill_between(mean, std, color, alpha=0.3, ax=None, **kwargs):
+    """Fill between mean and std.
+    
+    Args:
+        - mean (np.array): mean values
+        - std (np.array): standard deviation values
+        - color (str): color of the line
+        - alpha (float): transparency of the fill
+    """
     if ax == None: ax = plt.figure().add_subplot(111)
     ax.plot(mean, color=color, **kwargs)
     ax.fill_between(
@@ -121,3 +111,32 @@ def fill_between(mean, std, color, alpha=0.3, ax=None, **kwargs):
         alpha=alpha
     )
     return ax
+
+
+# Set x and y labels
+def set_xylabel(ax, xlabel, ylabel):
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+
+
+# Make spines invisible
+def set_invisible(ax, rm_all=False):
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    if rm_all:
+        ax.spines['left'].set_visible(False)
+        ax.spines['bottom'].set_visible(False)
+
+
+# Remove tick marks and labels
+def rm_ticklabels(ax, rm_ticks=True, rm_labels=True):
+    if rm_ticks:
+        ax.set_xticks([])
+        ax.set_yticks([])
+    if rm_labels:
+        ax.tick_params(axis='both', which='both', bottom=False, top=False, left=False, right=False, labelbottom=False, labelleft=False)
+        
+# Make directory if it doesn't exist
+def mkfile(*args):
+    os.makedirs(os.path.join(*args), exist_ok=True)
+    
