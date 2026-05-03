@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 from collections import namedtuple 
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.metrics import r2_score
@@ -6,9 +7,11 @@ from sklearn.linear_model import Ridge, Lasso
 
 
 # Helper functions
-sigmoid = lambda x: 1 / (1 + np.exp(-x))
-normalize = lambda theta: np.arctan2(np.sin(theta), np.cos(theta))
-flatten = lambda arr: arr.reshape(-1, arr.shape[-1])
+sigmoid = lambda x: 1 / (1 + np.exp(-x)) # sigmoid function
+normalize = lambda theta: np.arctan2(np.sin(theta), np.cos(theta)) # convert angle into interval [-pi, pi]
+normalize_torch = lambda theta: torch.arctan2(torch.sin(theta), torch.cos(theta))
+sum_nested = lambda arr: sum(sum(arr)) # sum the nested list
+flatten = lambda arr: arr.reshape(-1, arr.shape[-1]) # flatten the tensor
 
 
 def generate_noisy_sine_waves(batch, time, dim, freq, noise_level=0.1):
@@ -92,6 +95,62 @@ PassDecisionMotionMessages = namedtuple(
         "m_rep"
     ],
 )
+
+
+def get_insert_func(arr_flat, return_slice=False):
+    """
+    Build insert/slice helpers for a 2D tensor ``(batch, sum(arr_flat))``.
+
+    Args:
+        arr_flat: List of segment widths along the last dimension.
+        return_slice: If True, return ``(insert_func, exclude_func, slice_func)``.
+
+    Returns:
+        Tuple of callables. ``insert_func(tensor, data, idx)`` writes ``data`` into
+        the segment at flat index ``idx``. ``slice_func(tensor, idx)`` returns that segment.
+    """
+    if not return_slice:
+        raise NotImplementedError("Only return_slice=True is supported.")
+    arr_flat = [int(w) for w in arr_flat]
+    offsets = [0]
+    for w in arr_flat:
+        offsets.append(offsets[-1] + w)
+
+    def insert_func(tensor, data, idx):
+        start = offsets[idx]
+        tensor[:, start : start + data.shape[-1]] = data
+
+    def exclude_func(*args, **kwargs):
+        raise NotImplementedError("exclude_func is not used for this DGN layout.")
+
+    def slice_func(tensor, idx):
+        start = offsets[idx]
+        end = start + arr_flat[idx]
+        return tensor[:, start:end]
+
+    return insert_func, exclude_func, slice_func
+
+
+def categorize(data, itvl, num_angles):
+    """
+    Categorize the data into the number of angles residing within the interval. 
+    """
+    bins = torch.linspace(*itvl, num_angles + 1).to(data.device)
+    return (torch.bucketize(data, bins) - 1).reshape(*data.shape)
+
+
+def one_hot_encode(data, itvl, num_angles):
+    """
+    One hot encode the data into the number of angles residing within the interval.
+    """
+    if num_angles is None: # should infer num_angles from data
+        num_angles = int(torch.max(data)) + 1
+    data = categorize(data, itvl, num_angles)
+
+    # One hot encode the data
+    one_hot = torch.zeros(data.shape[:-1] + (num_angles,)).to(data.device)
+    one_hot[torch.arange(data.shape[0])[:, None], torch.arange(data.shape[1]), data.squeeze()] = 1
+    return one_hot
 
 
 # Helper class to perform polynomial regression for decodability analyses

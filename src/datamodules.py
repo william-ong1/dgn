@@ -3,8 +3,8 @@ import pytorch_lightning as pl
 
 from torch.utils.data import DataLoader, Dataset, random_split
 from scipy.ndimage import gaussian_filter1d
-from utils.common_utils import generate_noisy_sine_waves
-from utils.cognitive_tasks import task_map, normalize
+from utils.common_utils import generate_noisy_sine_waves, normalize
+from utils.cognitive_tasks import task_map
 
 
 class DGNDataModuleBase(pl.LightningDataModule):

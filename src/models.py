@@ -10,17 +10,17 @@ import utils.visualization_utils as vis
 
 from utils.torch_utils import (
     RNNChannel,
-    MLPBase,
-    normalize_torch,
-    one_hot_encode,
-    sum_nested,
+    MLPBase
 )
 
 from utils.common_utils import (
     Messages,
     PassDecisionMotionMessages,
     get_insert_func,
-    flatten
+    flatten,
+    one_hot_encode,
+    normalize_torch,
+    sum_nested
 )
 
 

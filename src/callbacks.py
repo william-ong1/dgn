@@ -1,3 +1,4 @@
+import math
 import os
 import h5py
 import torch
@@ -9,7 +10,8 @@ import seaborn as sns
 import utils.visualization_utils as vis
 
 from copy import deepcopy
-from utils.common_utils import area_activity_to_poisson_counts
+from utils.common_utils import area_activity_to_poisson_counts, sigmoid
+from utils.torch_utils import one_hot_encode
 
 
 # Save directory
@@ -501,3 +503,80 @@ class HiddenUnitsPlot:
                 vis.set_invisible(axs[ia, b])
         
         vis.savefig(f"HiddenUnits_epoch={trainer.current_epoch}.png", folders=[SAVE_DIR], close=True)
+
+
+class TaskRespPlot:
+    def __init__(
+        self,
+        log_every_n_epochs: int = 1,
+        run_steps: list = ["valid"],
+        num_batches: int = 4,
+    ):
+        """
+        Plot task and response, where each column is a batch.
+        Row 1 are the fixation target and saccade (after sigmoid).
+        Row 2 are the response target (after argmax) and output (population).
+        """
+        self.name = "taskrespplot"
+        self.run_steps = run_steps
+        self.log_every_n_epochs = log_every_n_epochs
+        self.num_batches = num_batches
+
+    def run(self, trainer, pl_module, **kwargs):
+        if (trainer.current_epoch % self.log_every_n_epochs) != 0:
+            return
+        if trainer.current_epoch <= 1:
+            return
+
+        hps = pl_module.hparams
+        num_rows, num_cols = 2, max([self.num_batches, hps.num_tasks])
+
+        # Get data to plot
+        fix, stim1, amp1, stim2, amp2, task, resp, sacc = pl_module.current_batch
+        resp_angles = resp.cpu().detach()
+
+        # One-hot encode response
+        resp = one_hot_encode(resp, [-math.pi, math.pi], hps.num_angles).cpu().detach()
+        outputs = pl_module.outputs.cpu().detach()
+
+        # Plot, each column is a batch
+        fig, axs = plt.subplots(
+            num_rows,
+            num_cols,
+            figsize=(num_cols * 3, num_rows * 3),
+            sharex=False,
+            sharey=False,
+        )
+
+        # Get color, each area is a color
+        colors = sns.color_palette("hls", hps.num_areas)
+        for b in range(num_cols):
+            axs[0, b].plot(sacc[b, :, 0].cpu().detach().numpy(), "k")
+            for n in range(hps.num_areas):
+                axs[0, b].plot(
+                    sigmoid(pl_module.save_var.latents[b, :, n].cpu().detach().numpy()),
+                    color=colors[n],
+                    label=f"A{n}",
+                )
+            # Plot response class and mask
+            resp_class = torch.argmax(resp, dim=2).numpy()
+            resp_mask = torch.where(
+                resp_angles != 0, torch.tensor(1), torch.tensor(0)
+            ).numpy()[..., 0]
+            angle_class = torch.argmax(outputs, dim=2).numpy()
+            axs[1, b].plot(resp_class[b, :] * resp_mask[b, :], "k")
+            axs[1, b].plot(
+                angle_class[b, :] * resp_mask[b, :]
+                + outputs[b, :].numpy().mean(axis=-1) * (1 - resp_mask[b, :]),
+                color="b",
+                linestyle="--",
+            )
+
+        axs[0, 0].legend()
+        vis.common_col_title(fig, [f"Batch {i}" for i in range(num_cols)], axs.shape)
+        vis.common_row_ylabel(fig, ["Fixation", "Response"], axs.shape)
+        vis.savefig(
+            f"TaskResp_epoch={trainer.current_epoch}.png",
+            folders=[SAVE_DIR],
+            close=True,
+        )
