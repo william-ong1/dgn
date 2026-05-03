@@ -7,9 +7,9 @@ def common_col_title(fig, titles, shape):
     """Put a common `title` on the columns of figure `fig`.
     
     Args:
-        - fig (plt.figure)
-        - titles (list): list of strings, must have length = N2
-        - shape (tuple): shape of figure subplots, (N1, N2)
+        fig (plt.figure)
+        titles (list): list of strings, must have length = N2
+        shape (tuple): shape of figure subplots, (N1, N2)
     """
     N1, N2 = shape
     for n in range(N2):
@@ -22,9 +22,9 @@ def common_col_xlabel(fig, xlabels, shape):
     """Put a common `xlabel` on the columns of figure `fig`.
     
     Args:
-        - fig (plt.figure)
-        - titles (list): list of strings, must have length = N2
-        - shape (tuple): shape of figure subplots, (N1, N2)
+        fig (plt.figure)
+        titles (list): list of strings, must have length = N2
+        shape (tuple): shape of figure subplots, (N1, N2)
     """
     N1, N2 = shape
     for n in range(N2):
@@ -37,9 +37,9 @@ def common_row_ylabel(fig, ylabels, shape):
     """Put a common `ylabel` on the rows of figure `fig`.
     
     Args:
-        - fig (plt.figure)
-        - titles (list): list of strings, must have length = N1
-        - shape (tuple): shape of figure subplots, (N1, N2)
+        fig (plt.figure)
+        titles (list): list of strings, must have length = N1
+        shape (tuple): shape of figure subplots, (N1, N2)
     """
     N1, N2 = shape
     for n in range(N1):
@@ -52,9 +52,9 @@ def common_label(fig, xlabel, ylabel):
     """Put a common `xlabel` and `ylabel` on the figure `fig`.
     
     Args:
-        - fig (plt.figure)
-        - xlabel (str)
-        - ylabel (str)
+        fig (plt.figure)
+        xlabel (str)
+        ylabel (str)
     """
     fig.add_subplot(111, frameon=False)
     plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False)
@@ -66,8 +66,8 @@ def color_time(ax, x, cmap="viridis"):
     """Colors the (`x`, `y`, *`z`) trajectory by time on the axis `ax`.
     
     Args:
-        - ax (plt.subplot): axis object to plot on
-        - x (np.array): trajectory to plot, shape = (dim, time), where dim \in {2,3}
+        ax (plt.subplot): axis object to plot on
+        x (np.array): trajectory to plot, shape = (dim, time), where dim in {2,3}
     """
     T = x.shape[1] - 2
     color = sns.color_palette(cmap, T)
@@ -79,11 +79,11 @@ def savefig(figname="temp.png", clear=True, close=False, dpi=200, folders=[]):
     """Saves figure.
     
     Args:
-        - figname (str): default: "temp.png"
-        - clear (bool): whether to execute plt.clf(), default: True
-        - close (bool): whether to close all plots, default: False
-        - dpi (int): default: 200
-        - folders (list): parent folders, default: []
+        figname (str): default: "temp.png"
+        clear (bool): whether to execute plt.clf(), default: True
+        close (bool): whether to close all plots, default: False
+        dpi (int): default: 200
+        folders (list): parent folders, default: []
     """
     if len(folders) > 0: mkfile(os.path.join(*folders))
     plt.tight_layout()
@@ -96,10 +96,10 @@ def fill_between(mean, std, color, alpha=0.3, ax=None, **kwargs):
     """Fill between mean and std.
     
     Args:
-        - mean (np.array): mean values
-        - std (np.array): standard deviation values
-        - color (str): color of the line
-        - alpha (float): transparency of the fill
+        mean (np.array): mean values
+        std (np.array): standard deviation values
+        color (str): color of the line
+        alpha (float): transparency of the fill
     """
     if ax == None: ax = plt.figure().add_subplot(111)
     ax.plot(mean, color=color, **kwargs)

@@ -108,13 +108,13 @@ class RNNChannel(nn.Module):
     def __init__(self, input_size, hidden_size, output_sizes, output_nonlinearity, rnn_nonlinearity="tanh", override_single=False, **kwargs):
         """
         Args:
-            - input_size (int): Size of the input to the RNN.
-            - hidden_size (int): Size of the hidden state of the RNN.
-            - output_sizes (list): Sizes of the outputs of the MLP.
-            - output_nonlinearity (str): Nonlinearity of the outputs of the MLP.
-            - rnn_nonlinearity (str): Nonlinearity of the RNN.
-            - override_single (bool): If True, the output of the MLP will be split into the different outputs if there are multiple outputs.
-            - kwargs: Additional keyword arguments for the RNNBase class.
+            input_size (int): Size of the input to the RNN.
+            hidden_size (int): Size of the hidden state of the RNN.
+            output_sizes (list): Sizes of the outputs of the MLP.
+            output_nonlinearity (str): Nonlinearity of the outputs of the MLP.
+            rnn_nonlinearity (str): Nonlinearity of the RNN.
+            override_single (bool): If True, the output of the MLP will be split into the different outputs if there are multiple outputs.
+            kwargs: Additional keyword arguments for the RNNBase class.
         """
         super(RNNChannel, self).__init__()
         self.input_size = input_size
