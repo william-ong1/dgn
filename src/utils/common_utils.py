@@ -10,7 +10,6 @@ from sklearn.linear_model import Ridge, Lasso
 sigmoid = lambda x: 1 / (1 + np.exp(-x)) # sigmoid function
 normalize = lambda theta: np.arctan2(np.sin(theta), np.cos(theta)) # convert angle into interval [-pi, pi]
 normalize_torch = lambda theta: torch.arctan2(torch.sin(theta), torch.cos(theta))
-sum_nested = lambda arr: sum(sum(arr)) # sum the nested list
 flatten = lambda arr: arr.reshape(-1, arr.shape[-1]) # flatten the tensor
 
 
@@ -151,6 +150,15 @@ def one_hot_encode(data, itvl, num_angles):
     one_hot = torch.zeros(data.shape[:-1] + (num_angles,)).to(data.device)
     one_hot[torch.arange(data.shape[0])[:, None], torch.arange(data.shape[1]), data.squeeze()] = 1
     return one_hot
+
+
+def sum_nested(arr):
+    """
+    Sum uneven nested arrays.
+    """
+    total = 0
+    for item in arr: total += sum(item)
+    return total
 
 
 # Helper class to perform polynomial regression for decodability analyses

@@ -346,6 +346,7 @@ class MultiTask(DGNDataModuleBase):
         train_type_kwargs: dict = {},
         dm_seed: int = 0,
         noise_sig: float = 0.0,
+        resultpath: str = ".",
     ):
         """
         Args:
@@ -360,6 +361,7 @@ class MultiTask(DGNDataModuleBase):
             train_type_kwargs: Keyword arguments for the training type.
             dm_seed: Seed for the data module.
             noise_sig: Standard deviation for noise.
+            resultpath: Path to save the results.
         """
         super().__init__()
         self.save_hyperparameters()

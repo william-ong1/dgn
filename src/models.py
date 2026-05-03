@@ -31,7 +31,7 @@ class VariableNoise:
     """
     Variable noise update class for hidden state and channel noise for DGNs.
     """
-    def __init__(self, init_noise, feature_dim, ema_decay=0.99, device='cuda', off=False):
+    def __init__(self, init_noise, feature_dim, ema_decay=0.99, device='cpu', off=False):
         """
         Args:
             init_noise: Initial noise magnitude.
@@ -809,7 +809,7 @@ class MultiTaskNet(DGNBase):
             self.projs[:, t] = self.readout(output)
             h = torch.cat(h_ias, dim=-1)
             
-            # Introduce delays
+            # Inter-area message delay (use past communicated mesgs)
             if t >= hps.delay:
                 mesgs = self.save_var.mesgs[:, t-hps.delay]
             else:

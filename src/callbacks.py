@@ -10,8 +10,7 @@ import seaborn as sns
 import utils.visualization_utils as vis
 
 from copy import deepcopy
-from utils.common_utils import area_activity_to_poisson_counts, sigmoid
-from utils.torch_utils import one_hot_encode
+from utils.common_utils import area_activity_to_poisson_counts, sigmoid, one_hot_encode
 
 
 # Save directory
