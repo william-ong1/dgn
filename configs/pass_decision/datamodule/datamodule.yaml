@@ -2,12 +2,10 @@ _target_: datamodules.LatentDecision
 
 batch_total: 2048
 time_total: 200
-hidden_size: 32
 p_split:
     - 0.5
     - 0.5
 
-lag: 0    
 mesg_dist: "exponential"
 sig_smooth: 1
 

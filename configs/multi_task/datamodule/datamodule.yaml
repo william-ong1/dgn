@@ -1,20 +1,14 @@
-_target_: datamodules.MultiTask
+_target_: ttdgn.MultiTask
 
-task_names:
-  - dms
-  - dmc_anti
-
-batch_total: 2048
+batch_total: 1640
 time_total: 200
-batch_size: 64
+batch_size: 32
 noise_sig: 0.01
-
 p_split:
   - 0.5
   - 0.5
 
-train_type: curriculum_ratio
-train_type_kwargs:
-  persist: 1
-  final_ratio: [1, 1]
+task_names:
+  - dly_go_anti
+
 resultpath: ${paths.resultpath}

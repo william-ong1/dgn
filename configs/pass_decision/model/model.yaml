@@ -1,7 +1,6 @@
 _target_: models.PassDecision
 
-hidden_size: ${datamodule.hidden_size}
-lag: ${datamodule.lag}
+hidden_size: 32
 
 noise_p: 0.01
 noise_d: 0.01
