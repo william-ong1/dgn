@@ -55,7 +55,7 @@ class DGNBase(pl.LightningModule):
 
 class MemoryNetwork(DGNBase):
     """
-    Multi-area recurrent memory network with a defined connectome for inter-area communication.
+    Multi-area recurrent memory network with a defined connectome for inter-area communication (DGN).
     """
     def __init__(
         self,
@@ -97,7 +97,8 @@ class MemoryNetwork(DGNBase):
 
             hidden_size: Number of hidden units per area.
             lr: Learning rate.
-            input_weight_init_var_scale: Scale factor for the initial variance of the RNN input weights.
+            input_weight_init_var_scale: Scale factor for the initial variance
+                of the RNN input weights.
 
             ext_input_dim: Dimensionality of external perturbation inputs.
                 Perturbations are implemented as a step input from time steps
@@ -166,7 +167,7 @@ class MemoryNetwork(DGNBase):
         self.noise_weight_generator = VariableNoise(
             self.hparams.noise,
             hps.num_areas * hps.hidden_size,
-            device = 'cpu',
+            device = 'cuda',
             off = (self.hparams.noise_type == 'fixed'),
         )
 
@@ -175,7 +176,7 @@ class MemoryNetwork(DGNBase):
         self.cnoise_weight_generator = VariableNoise(
             self.hparams.channel_noise,
             hps.total_mesgs,
-            device = 'cpu',
+            device = 'cuda',
             off = (self.hparams.channel_noise_type == 'fixed'),
         )
 
@@ -341,32 +342,59 @@ class MemoryNetwork(DGNBase):
             
 
 class PassDecision(DGNBase):
+    """
+    Two-area recurrent pass-decision network with area-specific input signals and integration of task signals (DGN).
+    """
     def __init__(
         self,
+        lag: int = 0,
+
         noise_p: float = 0.0,
         noise_d: float = 0.0,
+
         hidden_size: int = 64,
-        lag: int = None,
+        lr: float = 4.0e-3,
+        input_weight_init_var_scale: float = 1.0,
+
         p_to_d_coef: float = 1.0,
         rep_coef: float = 0.0,
         binary_output: bool = True,
         rnn_nonlinearity: str = "tanh",
-        lr: float = 4.0e-3,
-        input_weight_init_var_scale: float = 1.0,
     ):
+        """
+        Args:
+            lag: Time-step lag for pass-decision communication.
+
+            noise_p: Dynamic noise applied to Pass-area hidden states.
+            noise_d: Dynamic noise applied to Decision-area hidden states.
+
+            hidden_size: Number of hidden units per area.
+            lr: Learning rate.
+            input_weight_init_var_scale: Scale factor for the initial variance
+                of the RNN input weights.
+
+            p_to_d_coef: Loss weight for matching the Pass-Decision channel to
+                the raw input trajectory.
+            rep_coef: Loss weight for matching Decision hidden readouts to the
+                input (representation regularization).
+            binary_output: If True, decision decoder uses sigmoid + BCE against
+                a binarized cumulative input; if False, MSE against the
+                cumulative input.
+            rnn_nonlinearity: Nonlinearity for ``RNNChannel`` cells.
+        """
         super().__init__()
         self.save_hyperparameters()
         hps = self.hparams
-        
+
         # Fixed hps
         hps.input_dim = 2
         hps.channel_size = 2
         hps.output_size = hps.hidden_size
-        
-        # Pass area: input + latent (dim=1)
+
+        # Pass area: stimulus + latent (input_dim)
         self.P_area = RNNChannel(hps.input_dim, hps.hidden_size, [hps.input_dim], 
                                  None, rnn_nonlinearity=hps.rnn_nonlinearity)
-        # Decision area: input + latent (dim=1)
+        # Decision area: input + latent (input_dim)
         self.D_area = RNNChannel(hps.input_dim, hps.hidden_size, [hps.channel_size], 
                                  None, rnn_nonlinearity=hps.rnn_nonlinearity)
 
@@ -374,40 +402,46 @@ class PassDecision(DGNBase):
         nonlinearity = "sigmoid" if hps.binary_output else None
         self.decoder = MLPBase([[hps.channel_size, hps.input_dim, nonlinearity]])
         self.mseloss = nn.MSELoss()
-        self.bceloss = nn.BCELoss() # expects probability (needs sigmoid)
-        self.celoss = nn.CrossEntropyLoss() # does not expect sigmoid
+        self.bceloss = nn.BCELoss() # expects probability (sigmoid)
+        self.celoss = nn.CrossEntropyLoss() # does not expect probability (no sigmoid)
         
-        # Enforce representations of u in D
+        # Decoder on Decision hidden state (representation matching to input)
         self.D_decoder = MLPBase([[hps.hidden_size, hps.input_dim, None]])
 
-        # Increase variance of the RNN input weights.
+        # Increase variance of the RNN input weights
         self._scale_gru_input_weights_by_var()
         
     def forward(self, inp, latent, go, ctxt, step_type):
         hps = self.hparams
-        batch, time, _ = inp.shape
+        batch, time, _ = inp.shape # (batch, time, input_dim)
         self._build_save_var(batch, time)
 
+        # Initialize hidden states
         h_p = torch.zeros(batch, hps.hidden_size).to(self.device)
         h_d = torch.zeros(batch, hps.hidden_size).to(self.device)
         
+        # Main loop
         for t in range(time):
 
-            # Add perturbation to hidden states
+            # Add hidden state noise
             h_p = h_p + torch.randn_like(h_p) * hps.noise_p
             h_d = h_d + torch.randn_like(h_d) * hps.noise_d
             
+            # Forward pass through individual areas
             h_p, p_to_d = self.P_area(inp[:,t,:], h_p)
             h_d, d_to_m = self.D_area(p_to_d, h_d)
             
+            # Decode decision
             d = self.decoder(d_to_m)
             d_rep = self.D_decoder(h_d)
 
+            # Save variables
             self.save_var.p_to_d[:,t] = p_to_d
             self.save_var.d_to_m[:,t] = d_to_m
             self.save_var.d[:, t] = d
             self.save_var.d_rep[:, t] = d_rep
             
+            # Save hidden states
             self.hidden_states["P"][:,t] = h_p
             self.hidden_states["D"][:,t] = h_d
 
@@ -415,8 +449,9 @@ class PassDecision(DGNBase):
     
     def _shared_step(self, batch, step_type):
         hps = self.hparams
-        self.current_batch, info = batch
-        self.current_info = info
+        self.current_batch, self.current_info = batch
+
+        # Setup lag
         if not hps.lag:
             plag = nlag = None
         else:
@@ -427,7 +462,7 @@ class PassDecision(DGNBase):
         inp, latent, go, ctxt, action = self.current_batch
         p_to_d, d_to_m, d_pred, a, d_rep, m_rep, h_p, h_d = self.forward(inp, latent, go, ctxt, step_type)
         
-        # Get necessary components
+        # Get decision labels
         batch_size, time, _ = inp.shape
         dec = torch.cumsum(inp, dim=1) # shape = (batch, time, input_dim) still
         d_true_sign = torch.sign(dec) # becomes -1, 0 (highly unlikely) or 1
@@ -454,7 +489,7 @@ class PassDecision(DGNBase):
         d_label = (d_pred >= 0.5).float()
         accuracy = (d_true[:, :nlag] == d_label[:, plag:]).float().mean()
 
-        # Log
+        # Log metrics
         metrics = {
             f"{step_type}/loss": loss,
             f"{step_type}/d_loss": d_loss,
@@ -472,6 +507,8 @@ class PassDecision(DGNBase):
     
     def _build_save_var(self, batch_size, time):
         hps = self.hparams
+
+        # Storage for pass-decision communication
         self.save_var = PassDecisionMotionMessages(
             p_to_d = torch.zeros(batch_size, time, hps.input_dim).to(self.device),
             d_to_m = torch.zeros(batch_size, time, hps.channel_size).to(self.device),
@@ -480,16 +517,29 @@ class PassDecision(DGNBase):
             d_rep = torch.zeros(batch_size, time, hps.input_dim).to(self.device),
             m_rep = torch.zeros(0).to(self.device),
         )
+
+        # Storage for hidden states
         self.hidden_states = {
             "P": torch.zeros(batch_size, time, hps.output_size).to(self.device),
             "D": torch.zeros(batch_size, time, hps.output_size).to(self.device),
         }
-        
-    @staticmethod
-    def init_weight(pm): nn.init.normal_(pm, mean=0.0, std=1.0)
-            
+
+
 class VariableNoise:
-    def __init__(self, init_noise, feature_dim, ema_decay=0.99, device='cpu', off=False):
+    """
+    Variable noise update class for hidden state and channel noise for DGNs.
+    """
+    def __init__(self, init_noise, feature_dim, ema_decay=0.99, device='cuda', off=False):
+        """
+        Args:
+            init_noise: Initial noise magnitude.
+            feature_dim: Number of features.
+            ema_decay: Exponential moving average decay rate.
+            device: Device to use.
+            off: If True, noise is turned off.
+            noise_dist: Distribution of the noise.
+            ema_norm: Exponential moving average of the noise.
+        """
         self.init_noise = float(init_noise)
         self.feature_dim = feature_dim
         self.ema_decay = ema_decay
@@ -504,10 +554,7 @@ class VariableNoise:
 
         # If noise is turned off:
         if self.off:
-            return torch.full((F,),
-                               self.init_noise,
-                               device=data.device,
-                               dtype=data.dtype)
+            return torch.full((F,), self.init_noise, device=data.device, dtype=data.dtype)
 
         # Compute per-feature norms
         with torch.no_grad():
@@ -519,10 +566,7 @@ class VariableNoise:
             if self.ema_norm.sum() == 0: # first update → direct assign
                 self.ema_norm = norm
             else:
-                self.ema_norm = (
-                    self.ema_decay * self.ema_norm
-                    + (1 - self.ema_decay) * norm
-                )
+                self.ema_norm = (self.ema_decay * self.ema_norm + (1 - self.ema_decay) * norm)
 
         scaled_noise = self.ema_norm * self.noise_dist
         return scaled_noise
