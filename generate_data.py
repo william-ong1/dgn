@@ -1,4 +1,5 @@
 import os
+import sys
 import shutil
 import argparse
 from pathlib import Path
@@ -108,6 +109,9 @@ def run_experiment(
 ) -> None:
     overrides = overrides or []
     project_root = Path(__file__).resolve().parent
+    src_dir = project_root / "src"
+    if src_dir.is_dir() and str(src_dir) not in sys.path:
+        sys.path.insert(0, str(src_dir))
     _register_resolvers(project_root)
 
     config_file = Path(config).expanduser().resolve()

@@ -1,13 +1,13 @@
 on_epoch_end_calls:
-  _target_: dgn.callbacks.OnEpochEndCalls
+  _target_: callbacks.OnEpochEndCalls
   callbacks:
-    - _target_: dgn.callbacks.Log
-    - _target_: dgn.callbacks.ProctorSummaryPlot
+    - _target_: callbacks.Log
+    - _target_: callbacks.ProctorSummaryPlot
       log_every_n_epochs: 10
       multiple_acc: True
-    - _target_: dgn.ttdgn.TaskRespPlot
+    - _target_: ttdgn.TaskRespPlot
       log_every_n_epochs: 10
-    - _target_: dgn.callbacks.SaveAsH5
+    - _target_: callbacks.SaveAsH5
       log_every_n_epochs: 1
       ground_truth:
           - "fix"
