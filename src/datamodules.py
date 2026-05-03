@@ -4,7 +4,7 @@ import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Dataset, random_split
 from scipy.ndimage import gaussian_filter1d
 from utils.common_utils import generate_noisy_sine_waves
-# from utils.common_utils import plot_input_samples
+from utils.cognitive_tasks import task_map, normalize
 
 
 class DGNDataModuleBase(pl.LightningDataModule):
@@ -71,7 +71,7 @@ class NoisySources(DGNDataModuleBase):
             time_total: Total number of time steps.
             input_dim: Dimensionality of input for each area. If an integer 
                 is passed, all areas will share the same dimensionality.
-            p_split: train/validation split percentage, must sum up to 1.
+            p_split: Train/validation split percentage, must sum up to 1.
             batch_size: Size of each training batch. Validation batch size is always
                 the total number of validation batches.
             mesg_type: Distribution type for signals. Options are:
@@ -147,7 +147,7 @@ class NoisySources(DGNDataModuleBase):
 
 class LatentDecision(DGNDataModuleBase):
     """
-    DataModule for generating latent decision, used with the `PassDecision` model.
+    DataModule for generating latent decisions, used with the `PassDecision` model.
     """
     def __init__(
         self,
@@ -329,3 +329,214 @@ class LatentDecision(DGNDataModuleBase):
             return np.convolve(data, decay_weights, mode='full')[:len(data)]
 
         return np.apply_along_axis(filter_func, axis, array)
+
+
+class MultiTask(DGNDataModuleBase):
+    """
+    DataModule for generating multi-task data, used with the `MultiTaskNet` model.
+    """
+    def __init__(
+        self,
+        task_names: list,
+        batch_total: int,
+        time_total: int,
+        p_split: list = [0.8, 0.2],
+        batch_size: int = 64,
+        train_type: str = "random",
+        train_type_kwargs: dict = {},
+        dm_seed: int = 0,
+        noise_sig: float = 0.0,
+    ):
+        """
+        Args:
+            task_names: List of task names.
+            batch_total: Total number of batches (trials).
+            time_total: Total number of time steps.
+            p_split: Train/validation split percentage, must sum up to 1.
+            batch_size: Size of each training batch. Validation batch size is always
+                the total number of validation batches.
+            train_type: Type of training. Options are:
+                'random', 'batch_uniform', 'curriculum_ratio'.
+            train_type_kwargs: Keyword arguments for the training type.
+            dm_seed: Seed for the data module.
+            noise_sig: Standard deviation for noise.
+        """
+        super().__init__()
+        self.save_hyperparameters()
+        self.current_epoch = 0
+        
+    def setup(self, stage=None):
+        """
+        Setup the dataset and split into train and validation sets.
+        """
+        hps = self.hparams
+        
+        # Construct all "Task" classes
+        tasks = []
+        for task_name in hps.task_names:
+            task_class, task_config = task_map[task_name]
+            task = task_class(task_config, hps.time_total)
+            tasks.append(task)
+            try:
+                task.draw(save=True, figname=task_name, n_batches=4)
+            except:
+                print('Task draw() failed. Continuing...')
+        self.tasks = tasks
+            
+        # Generate train and validation sizes
+        batch_train = int(hps.batch_total * hps.p_split[0])
+        batch_val = hps.batch_total - batch_train
+        
+        # Generate validation set (random order)
+        self.val_batch_order = self.random_order(batch_val)
+        self.val_ds = self.gen_data(tasks, self.val_batch_order)
+        
+        # Generate train set
+        self.gen_train_ds(batch_train)
+        
+    def gen_train_ds(self, batch_train):
+        """
+        Generate the train dataset according to the train type.
+        """
+        hps = self.hparams
+        if hps.train_type == "random": # random order
+            train_batch_order = self.random_order(batch_train)
+        elif hps.train_type == "batch_uniform": # single task per batch
+            train_batch_order = self.single_task_per_batch_order(batch_train, **hps.train_type_kwargs,)
+        elif hps.train_type == "curriculum_ratio": # task ratio changes over time
+            train_batch_order = self.curriculum_ratio_order(batch_train, **hps.train_type_kwargs,)
+        else:
+            raise ValueError(f"Unknown train_type: {hps.train_type}")
+            
+        # Generate train dataset
+        self.train_batch_order = train_batch_order
+        self.train_ds = self.gen_data(self.tasks, self.train_batch_order)
+        
+    def gen_data(self, tasks, batch_order):
+        """
+        Generate data for a given batch order.
+        """
+        hps = self.hparams
+
+        def gen_noise(arr, mag=1):
+            return np.random.normal(0, 1, arr.shape) * mag * hps.noise_sig
+
+        batch_size = len(batch_order)
+
+        # Initialize arrays for each task type
+        fixs = np.zeros((batch_size, hps.time_total, 1))
+        stim1s = np.zeros((batch_size, hps.time_total, 1))
+        stim2s = np.zeros((batch_size, hps.time_total, 1))
+        resps = np.zeros((batch_size, hps.time_total, 1))
+        saccs = np.zeros((batch_size, hps.time_total, 1))
+        amp1s = np.zeros((batch_size, 1))
+        amp2s = np.zeros((batch_size, 1))
+        
+        # Generate data for each batch
+        for b, tpe in enumerate(batch_order):
+            fix, (stim1, amp1), (stim2, amp2), resp, sacc = tasks[int(tpe)].gen_single_trial()
+            fixs[b, :] = fix + gen_noise(fix)
+            stim1s[b, :] = normalize(stim1 + gen_noise(stim1, mag=0.1)) # stim1
+            stim2s[b, :] = normalize(stim2 + gen_noise(stim2, mag=0.1)) # stim2
+            resps[b, :] = resp
+            saccs[b, :] = sacc
+            amp1s[b] = amp1
+            amp2s[b] = amp2
+        
+        # Create task indices and return dataset
+        task_idxs = np.tile(batch_order.reshape(-1, 1, 1), (1, hps.time_total, 1))
+        return BasicDataset(fixs, stim1s, amp1s, stim2s, amp2s, task_idxs, resps, saccs)
+            
+    def random_order(self, batch_size, **kwargs):
+        """
+        Repeated shuffled permutations of all task ids.
+        """
+        hps = self.hparams
+        num_task = len(hps.task_names)
+        task_idxs = np.arange(num_task).astype(int)
+        
+        rng = np.random.default_rng(hps.dm_seed)
+        num_mini_batch = int(np.ceil(batch_size/num_task))
+        batch = np.zeros(num_mini_batch * num_task)
+        
+        # Shuffle task indices for each mini-batch
+        for b in range(num_mini_batch):
+            rng.shuffle(task_idxs)
+            batch[b * num_task: (b+1) * num_task] = task_idxs
+        
+        return batch[:batch_size]
+    
+    def single_task_per_batch_order(self, batch_total, **kwargs):
+        """
+        Long runs of one task (``batch_size * persist`` samples), then the next task, repeating.
+        """
+        defaults = {'persist': 1}
+        defaults.update(kwargs)
+        persist = defaults['persist']
+        
+        hps = self.hparams
+        num_task = len(hps.task_names)
+        task_idxs = np.arange(num_task).astype(int)
+        
+        # Tile task indices to create a base pattern
+        base = np.tile(task_idxs.reshape(1, -1), (hps.batch_size * persist, 1)) # shape = (bs & persist, num_tasks)
+        base = base.flatten(order='F') # [0, 0, 0... 1, 1, 1....,]
+        num_repeats = int(np.ceil(batch_total / len(base)))
+        return np.tile(base, num_repeats)[:batch_total]
+    
+    def curriculum_ratio_order(self, batch_total: int, **kwargs):
+        """
+        Per-block task draws with weights moving from uniform toward ``final_ratio`` as ``current_epoch`` increases.
+        """
+        defaults = {
+            "persist": 1,
+            "final_ratio": None,   # if None -> stays uniform
+            "decay": 50.0,
+        }
+        defaults.update(kwargs)
+        persist = int(defaults["persist"])
+        final_ratio = defaults["final_ratio"]
+        decay = float(defaults["decay"])
+
+        hps = self.hparams
+        num_task = len(hps.task_names)
+        epoch = getattr(self, "current_epoch", 0)
+
+        # Define initial (uniform) and target ratios
+        init_ratio = np.ones(num_task, dtype=float) / num_task
+
+        # Define target ratio and ensure it matches the number of tasks
+        if final_ratio is None:
+            target_ratio = init_ratio.copy()
+        else:
+            target_ratio = np.asarray(final_ratio, dtype=float)
+            assert target_ratio.shape[0] == num_task, \
+                f"final_ratio length {target_ratio.shape[0]} must match num_tasks={num_task}"
+            target_ratio = target_ratio / target_ratio.sum()
+
+        # alpha ~ 0 => uniform, alpha ~ 1 => target_ratio
+        if decay <= 0:
+            alpha = 1.0
+        else:
+            alpha = 1.0 - np.exp(-epoch / decay)
+        alpha = float(np.clip(alpha, 0.0, 1.0))
+
+        # Interpolate between initial and target ratios
+        curr_ratio = (1.0 - alpha) * init_ratio + alpha * target_ratio
+        curr_ratio = curr_ratio / curr_ratio.sum()
+
+        # Sample block-wise tasks according to curr_ratio
+        block_size = hps.batch_size * persist
+        num_blocks = int(np.ceil(batch_total / block_size))
+
+        # Make RNG depend on epoch so pattern changes across epochs
+        rng = np.random.default_rng(hps.dm_seed + int(epoch))
+
+        # Choose a task id for each block
+        block_tasks = rng.choice(num_task, size=num_blocks, p=curr_ratio)
+        batch = np.repeat(block_tasks, block_size)
+        return batch[:batch_total]
+
+    def train_dataloader(self, shuffle: bool = False):
+        # Batch order is produced by train_type (curriculum, etc.)
+        return super().train_dataloader(shuffle=shuffle)
