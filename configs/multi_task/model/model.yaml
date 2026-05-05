@@ -1,4 +1,4 @@
-_target_: ttdgn.MultiTaskNet
+_target_: models.MultiTaskNet
 
 angle_scale: 1
 delay: 5
@@ -26,6 +26,8 @@ diagram:
     - '1'
     
 hidden_size: 64
+use_global_latent: true
+global_latent_size: 64
 noise: 0.01
 num_areas: 4
 num_channels: 8

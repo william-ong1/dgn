@@ -1,4 +1,4 @@
-_target_: ttdgn.MultiTask
+_target_: datamodules.MultiTask
 
 batch_total: 1640
 time_total: 200
