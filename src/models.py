@@ -624,6 +624,9 @@ class MultiTaskNet(DGNBase):
         l1_start_epoch: int = 150,
         l1_increase_epoch: int = 150,
         l1_scale: float = 0.0,
+
+        use_global_latent: bool = False,
+        global_latent_size: int = 0,
         
     ):
         """
@@ -654,11 +657,20 @@ class MultiTaskNet(DGNBase):
             l1_start_epoch: Start epoch for L1 ramp on communication weights.
             l1_increase_epoch: Ramp length for L1.
             l1_scale: L1 strength.
+
+            use_global_latent: If True, maintain a shared latent ``g`` across areas; each
+                area's RNN receives ``concat(inp, g)`` while keeping region-specific
+                hidden states ``h``. ``g`` is updated each timestep from all regional
+                hiddens (brain-wide dynamics plus area-specific dynamics).
+            global_latent_size: Dimension of ``g``. If 0 and ``use_global_latent`` is
+                True, defaults to ``hidden_size``.
         """
         super().__init__()
         self.save_hyperparameters(ignore=["task_names"])
 
         hps = self.hparams
+        if hps.use_global_latent and hps.global_latent_size <= 0:
+            hps.global_latent_size = hps.hidden_size
         hps.task_names = task_names
         hps.num_tasks = len(hps.task_names)
         
@@ -667,7 +679,7 @@ class MultiTaskNet(DGNBase):
 
         # Set default stimulus input areas
         if not stim_input_areas:
-            hps.stim_input_areas = ["A0"] * 3
+            hps.stim_input_areas = ["A0"] * 4
         else:
             hps.stim_input_areas = stim_input_areas
 
@@ -677,6 +689,11 @@ class MultiTaskNet(DGNBase):
 
         # Build areas, insert function, slice function, loss functions
         self._build_areas()
+        if hps.use_global_latent:
+            self.global_latent_cell = nn.GRUCell(
+                hps.num_areas * hps.hidden_size,
+                hps.global_latent_size,
+            )
         self.insert_func, self.slice_func = self.get_insert_func_nested(hps.total_mesgs)
         self.mseloss = nn.MSELoss(reduction="none")
         self.bceloss = nn.BCELoss(reduction="none")
@@ -700,11 +717,14 @@ class MultiTaskNet(DGNBase):
                 edges[int(src[1:])].append(int(data["weight"])-1) # minus 1 resets the index to match task
         self.edges = edges
         
-        # Build variable noise update class
+        # Build variable noise update class (optional extra features for global latent g)
         assert self.hparams.noise_type in ['fixed', 'variable']
+        _noise_feat_dim = hps.num_areas * hps.hidden_size
+        if hps.use_global_latent:
+            _noise_feat_dim += hps.global_latent_size
         self.noise_weight_generator = VariableNoise(
             self.hparams.noise,
-            hps.num_areas * hps.hidden_size,
+            _noise_feat_dim,
             device = 'cuda',
             off = (self.hparams.noise_type == 'fixed'),
         )
@@ -720,6 +740,10 @@ class MultiTaskNet(DGNBase):
 
         # Initialize noise weights
         self.h_noise_weight = torch.ones(hps.hidden_size, hps.num_areas).to(self.device) * hps.noise
+        if hps.use_global_latent:
+            self.g_noise_weight = torch.ones(hps.global_latent_size).to(self.device) * hps.noise
+        else:
+            self.g_noise_weight = None
         self.c_noise_weight = torch.ones(sum_nested(hps.total_mesgs)).to(self.device) * hps.channel_noise
         
         # Increase variance of the RNN input weights
@@ -735,6 +759,10 @@ class MultiTaskNet(DGNBase):
         # Initialize hidden states and messages
         h = torch.zeros(batch, hps.hidden_size * hps.num_areas).to(self.device)
         mesgs = torch.zeros(batch, sum_nested(hps.total_mesgs)).to(self.device)
+        if hps.use_global_latent:
+            g = torch.zeros(batch, hps.global_latent_size).to(self.device)
+        else:
+            g = None
         
         # Find task corresponding to each batch, shape = (batch,)
         task_idx = inp[3][:, 0, 0]
@@ -747,6 +775,8 @@ class MultiTaskNet(DGNBase):
             
             # Add noise to hidden states, h is shaped in the order of (hs of area 1, hs of area 2,...)
             h = h + torch.randn_like(h) * self.h_noise_weight.reshape(1, -1).to(self.device)
+            if hps.use_global_latent:
+                g = g + torch.randn_like(g) * self.g_noise_weight.reshape(1, -1).to(self.device)
             
             # Setup variable storage per time t
             h_ias, fixs = [], []
@@ -769,6 +799,8 @@ class MultiTaskNet(DGNBase):
                 for idx in self.input_indices[area_name]:
                     inp_ia.append(self.slice_func(mesgs, *idx))
                 inp_ia = torch.cat(inp_ia, dim=1).to(torch.float32)
+                if hps.use_global_latent:
+                    inp_ia = torch.cat([inp_ia, g], dim=-1)
 
                 # Forward pass through area
                 h_ia, mesg_ias = area(inp_ia, h[:, ia*hps.hidden_size: (ia+1)*hps.hidden_size])
@@ -808,6 +840,9 @@ class MultiTaskNet(DGNBase):
             self.save_var.latents[:, t] = torch.cat(fixs, dim=-1)
             self.projs[:, t] = self.readout(output)
             h = torch.cat(h_ias, dim=-1)
+            if hps.use_global_latent:
+                g = self.global_latent_cell(h, g)
+                self.global_latent_states[:, t] = g
             
             # Inter-area message delay (use past communicated mesgs)
             if t >= hps.delay:
@@ -819,8 +854,16 @@ class MultiTaskNet(DGNBase):
             channel_noise = torch.randn_like(mesgs) * self.c_noise_weight.reshape(1, -1).to(self.device)
             mesgs = mesgs + channel_noise
             
-        # Adjust noise weights
-        self.h_noise_weight = self.noise_weight_generator(torch.cat([hs for hs in self.hidden_states.values()], dim=2)) # hidden states from all areas
+        # Adjust noise weights (optionally include global latent trajectory for variable noise)
+        hs_cat = torch.cat([self.hidden_states[n] for n in self.area_names], dim=2)
+        if hps.use_global_latent:
+            noisy_stack = torch.cat([hs_cat, self.global_latent_states], dim=2)
+            nw = self.noise_weight_generator(noisy_stack)
+            nloc = hps.num_areas * hps.hidden_size
+            self.h_noise_weight = nw[:nloc]
+            self.g_noise_weight = nw[nloc:]
+        else:
+            self.h_noise_weight = self.noise_weight_generator(hs_cat)
         self.c_noise_weight = self.cnoise_weight_generator(self.save_var.mesgs)
 
         # Concatenate outputs
@@ -998,10 +1041,12 @@ class MultiTaskNet(DGNBase):
             else:
                 num_out = []
                 flag_out = -1
+
+            extra_g = hps.global_latent_size if hps.use_global_latent else 0
             
             # output: fixation (1) + number downstream + number output
             self.areas[f"A{ia}"] = RNNChannel(
-                num_input + num_up,
+                num_input + num_up + extra_g,
                 hps.hidden_size,
                 [1] + num_down + num_out,
                 None,
@@ -1044,6 +1089,9 @@ class MultiTaskNet(DGNBase):
                 if hps.stim_input_areas[2] == area_name: num_input += 2 # stim2
                 if hps.stim_input_areas[3] == area_name: num_input += 1 # task
             self.inputs[area_name] = torch.zeros(batch_size, time, num_input).to(self.device)
+
+        if hps.use_global_latent:
+            self.global_latent_states = torch.zeros(batch_size, time, hps.global_latent_size).to(self.device)
             
         # Initialize projs for readout
         self.projs = torch.zeros(batch_size, time, 1).to(self.device)
