@@ -80,7 +80,7 @@ def effectome_cosine_similarity(submission: ArrayMap, config_dir: Path):
     return results
 
 
-def truth_input_decoding_r2(
+def truth_input_decoding_memory_network(
     truth: ArrayMap,
     submission: ArrayMap,
     config_dir: Path,
@@ -127,6 +127,30 @@ def truth_input_decoding_r2(
         offset += r
 
     return results
+
+
+def message_reconstruction(truth: ArrayMap, submission: ArrayMap) -> dict[str, float]:
+    """
+    Message reconstruction R² by decoding the truth generator messages from submission
+    message features with a ridge model and reports held-out trial R².
+    """
+    y = np.asarray(truth["message-mesgs"], dtype=np.float64)
+    y_hat = np.asarray(submission["message-mesgs"], dtype=np.float64)
+
+    n_batch = y.shape[0]
+    train_idx, test_idx = train_test_split(np.arange(n_batch), test_size=0.2, random_state=0, shuffle=True)
+
+    # Decode truth generator messages from submission message features
+    x_train = y_hat[train_idx].reshape(-1, y_hat.shape[-1])
+    y_train = y[train_idx].reshape(-1, y.shape[-1])
+    x_test = y_hat[test_idx].reshape(-1, y_hat.shape[-1])
+    y_test = y[test_idx].reshape(-1, y.shape[-1])
+
+    decoder = Ridge(alpha=1.0)
+    decoder.fit(x_train, y_train)
+    y_pred = decoder.predict(x_test)
+
+    return {"message-r2": standard_r2(y_test, y_pred)}
 
 
 def standard_r2(y_true: np.ndarray, y_pred: np.ndarray) -> float:

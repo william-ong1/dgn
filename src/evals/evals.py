@@ -14,8 +14,9 @@ from .eval_utils import (
 
 from .metrics import (
     effectome_cosine_similarity,
+    message_reconstruction_memory_network,
     neural_activity_reconstruction,
-    truth_input_decoding_r2,
+    truth_input_decoding_memory_network
 )
 
 
@@ -61,10 +62,18 @@ def evaluate_memory_network_submission(submission: ArrayMap, truth: ArrayMap, co
 
     # Evaluate effectome recovery
     effectome_recovery_results = effectome_cosine_similarity(submission, config_dir)
-    results["structure"] = effectome_recovery_results
+
+    # Evaluate message reconstruction
+    message_recon_results = message_reconstruction_memory_network(truth, submission)
+
+    # Combine effectome recovery and message reconstruction results
+    struct = {}
+    struct.update(effectome_recovery_results)
+    struct.update(message_recon_results)
+    results["structure"] = struct
 
     # Evaluate truth input decoding
-    truth_inp_decode_results = truth_input_decoding_r2(truth, submission, config_dir)
+    truth_inp_decode_results = truth_input_decoding_memory_network(truth, submission, config_dir)
     results["truth-inp-decode"] = truth_inp_decode_results
 
     return results
@@ -74,7 +83,15 @@ def evaluate_pass_decision_submission(submission: ArrayMap, truth: ArrayMap, con
     """Evaluate a pass decision submission against ground truth."""
     
     results = {}
-    results.update(neural_activity_reconstruction(submission, truth, output_dist))
+
+    # Evaluate neural activity reconstruction
+    neural_activity_reconstruction_results = neural_activity_reconstruction(submission, truth, output_dist)
+    results["neural-activity"] = neural_activity_reconstruction_results
+
+    # Evaluate truth input decoding
+    truth_inp_decode_results = truth_input_decoding_pass_decision(truth, submission, config_dir)
+    results["truth-inp-decode"] = truth_inp_decode_results
+
     return results
 
 
