@@ -72,14 +72,14 @@ def get_area_names(submission: ArrayMap) -> list[str]:
     return [k.removeprefix("area-") for k in submission.keys() if k.startswith("area-")]
 
 
-# Get holdout neurons for each area
-def get_holdout_neurons(submission: ArrayMap) -> dict[str, np.ndarray]:
-    holdout_neurons = {}
+# Get heldout neurons for each area
+def get_heldout_neurons(submission: ArrayMap) -> dict[str, np.ndarray]:
+    heldout_neurons = {}
     for k in submission.keys():
         if k.startswith("meta-held-out-neuron-indices"):
-            holdout_neurons[k.removeprefix("meta-held-out-neuron-indices-")] = submission[k]
+            heldout_neurons[k.removeprefix("meta-held-out-neuron-indices-")] = submission[k]
     
-    return holdout_neurons
+    return heldout_neurons
 
 
 # Load memory-network connectome and ranks from model config
@@ -123,6 +123,10 @@ def split_results_for_display(results: dict) -> tuple[pd.DataFrame, pd.DataFrame
     structure = results.get("structure", {})
     if isinstance(structure, dict):
         global_metrics.update(structure)
+
+    aggregates = results.get("aggregates", {})
+    if isinstance(aggregates, dict):
+        global_metrics.update(aggregates)
 
     temporal = results.get("temporal", {})
     temporal_metrics: dict[str, float] = {}

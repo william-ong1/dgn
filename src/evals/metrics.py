@@ -14,7 +14,7 @@ from sklearn.model_selection import train_test_split
 from .eval_utils import (
     ArrayMap,
     get_area_names,
-    get_holdout_neurons,
+    get_heldout_neurons,
     load_memory_network_connectome_and_ranks,
 )
 
@@ -25,29 +25,28 @@ def neural_activity_reconstruction(submission: ArrayMap, truth: ArrayMap, distri
     """
     results = {}
     area_names = get_area_names(submission)
-    holdout_neurons = get_holdout_neurons(submission)
+    heldout_neurons = get_heldout_neurons(submission)
 
     for area_name in area_names:
         area = "area-" + area_name
         mask = np.zeros(truth[area].shape[2], dtype=bool)
-        mask[holdout_neurons.get(area, [])] = True
+        mask[heldout_neurons.get(area, [])] = True
 
-        r2_holdout = standard_r2(truth[area][:, :, mask], submission[area][:, :, mask]) if mask.any() else "n/a"
+        r2_heldout = standard_r2(truth[area][:, :, mask], submission[area][:, :, mask]) if mask.any() else "n/a"
         r2_heldin = standard_r2(truth[area][:, :, ~mask], submission[area][:, :, ~mask]) if not mask.all() else "n/a"
 
         results[area_name] = {
-                "r2-holdout": r2_holdout,
-                "r2-heldin": r2_heldin,
+                "r2-held-out": r2_heldout,
+                "r2-held-in": r2_heldin,
         }
 
         if distribution == "poisson":
-            r2_holdout_mcfadden = mcfadden_r2_poisson(truth[area][:, :, mask], submission[area][:, :, mask]) if mask.any() else "n/a"
+            r2_heldout_mcfadden = mcfadden_r2_poisson(truth[area][:, :, mask], submission[area][:, :, mask]) if mask.any() else "n/a"
             r2_heldin_mcfadden = mcfadden_r2_poisson(truth[area][:, :, ~mask], submission[area][:, :, ~mask]) if not mask.all() else "n/a"
 
-        
             results[area_name].update({
-                "r2_holdout_mcfadden": r2_holdout_mcfadden,
-                "r2_heldin_mcfadden": r2_heldin_mcfadden,
+                "r2-held-out-mcfadden": r2_heldout_mcfadden,
+                "r2-held-in-mcfadden": r2_heldin_mcfadden,
             })
 
     return results
@@ -62,7 +61,7 @@ def effectome_cosine_similarity(submission: ArrayMap, config_dir: Path):
 
     if "effectome-scores" in submission:
         pred_effectome_scores = submission.get("effectome-scores", None)
-        pred_effectome = (np.asarray(pred_effectome_scores, dtype=np.float64) > 0).astype(np.int64)
+        pred_effectome = np.asarray(pred_effectome_scores, dtype=np.float64)
         np.fill_diagonal(pred_effectome, 0)
         np.fill_diagonal(true_connectome, 0)
         cosine_score = cosine_similarity(pred_effectome, true_connectome * true_ranks.reshape(-1, 1))
@@ -76,6 +75,52 @@ def effectome_cosine_similarity(submission: ArrayMap, config_dir: Path):
         results.update({
             "inferred-input-cos-sim": cosine_score,
         })
+
+    return results
+
+
+def effectome_cosine_similarity_pass_decision(submission: ArrayMap) -> dict[str, float]:
+    """
+    Effectome recovery for pass-decision with fixed ground truth graph: P -> D only.
+
+    Uses submission ``effectome-scores`` if present, binarized at > 0, then computes
+    cosine similarity against the fixed adjacency in submission area order.
+    """
+    if "effectome-scores" not in submission:
+        return {}
+
+    area_names = get_area_names(submission)
+    if len(area_names) == 0:
+        return {}
+
+    pred_scores = np.asarray(submission["effectome-scores"], dtype=np.float64)
+    if pred_scores.ndim != 2:
+        return {}
+    if pred_scores.shape[0] != len(area_names) or pred_scores.shape[1] != len(area_names):
+        return {}
+
+    pred_effectome = pred_scores.astype(np.float64)
+    np.fill_diagonal(pred_effectome, 0)
+
+    true_effectome = np.zeros_like(pred_effectome, dtype=np.int64)
+    p_idx = next((i for i, n in enumerate(area_names) if n.lower().startswith("p")), None)
+    d_idx = next((i for i, n in enumerate(area_names) if n.lower().startswith("d")), None)
+    if p_idx is None or d_idx is None:
+        return {}
+
+    # Pass-decision convention: row=source, col=target (P -> D).
+    true_effectome[p_idx, d_idx] = 1
+    np.fill_diagonal(true_effectome, 0)
+
+    results = {"effectome-cos-sim": cosine_similarity(pred_effectome, true_effectome)}
+
+    if "inferred-input-scores" in submission:
+        pred_input_scores = np.asarray(submission["inferred-input-scores"], dtype=np.float64).reshape(-1)
+        if pred_input_scores.shape[0] == len(area_names):
+            # Fixed pass-decision convention: D has stronger inferred-input role than P.
+            true_input_scores = np.zeros(len(area_names), dtype=np.float64)
+            true_input_scores[d_idx] = 1.0
+            results["inferred-input-cos-sim"] = cosine_similarity(pred_input_scores, true_input_scores)
 
     return results
 
@@ -129,6 +174,39 @@ def truth_input_decoding_memory_network(
     return results
 
 
+def truth_input_decoding_pass_decision(
+    truth: ArrayMap,
+    submission: ArrayMap,
+    config_dir: Path | None = None,
+) -> dict[str, float]:
+    """
+    Area-specific decodability for pass-decision:
+      - P area activity decodes ``truth-inp``
+      - D area activity decodes ``message-p_to_d``
+    """
+    area_names = get_area_names(submission)
+
+    print(truth["message-d"])
+    results: dict[str, float] = {}
+    for name in area_names:
+        key = f"area-{name}"
+        if key not in submission:
+            continue
+
+        lname = name.lower()
+        if lname.startswith("p"):
+            target_key = "truth-inp"
+        elif lname.startswith("d"):
+            target_key = "message-p_to_d"
+
+        target = np.asarray(truth[target_key], dtype=np.float64)
+        x = np.asarray(submission[key], dtype=np.float64)
+        score = decode_r2_from_features(target, x)
+        results[name] = float(score)
+
+    return results
+
+
 def message_reconstruction(truth: ArrayMap, submission: ArrayMap) -> dict[str, float]:
     """
     Message reconstruction R² by decoding the truth messages.
@@ -137,6 +215,17 @@ def message_reconstruction(truth: ArrayMap, submission: ArrayMap) -> dict[str, f
     y = np.asarray(truth["message-mesgs"], dtype=np.float64)
     y_hat = np.asarray(submission["message-mesgs"], dtype=np.float64)
     return {"message-r2": decode_r2_from_features(y, y_hat)}
+
+
+def message_p_to_d_reconstruction(truth: ArrayMap, submission: ArrayMap) -> dict[str, float]:
+    """
+    Message p_to_d reconstruction R² by decoding truth `message-p_to_d`.
+    """
+    if "message-p_to_d" not in submission or "message-p_to_d" not in truth:
+        return {}
+    y = np.asarray(truth["message-p_to_d"], dtype=np.float64)
+    y_hat = np.asarray(submission["message-p_to_d"], dtype=np.float64)
+    return {"message-p_to_d-r2": decode_r2_from_features(y, y_hat)}
 
 
 def message_latent_reconstruction(truth: ArrayMap, submission: ArrayMap) -> dict[str, float]:

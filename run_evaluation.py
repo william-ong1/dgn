@@ -44,6 +44,18 @@ def main() -> None:
         default="evaluation_results.csv",
         help="Path to output CSV file.",
     )
+    parser.add_argument(
+        "--bootstrap-n",
+        type=int,
+        default=0,
+        help="Number of bootstrap resamples for 95% CI (0 disables).",
+    )
+    parser.add_argument(
+        "--bootstrap-seed",
+        type=int,
+        default=0,
+        help="Random seed for bootstrap resampling.",
+    )
     args = parser.parse_args()
 
     submission_h5 = args.submission_h5.expanduser().resolve()
@@ -67,9 +79,14 @@ def main() -> None:
         experiment_type=args.experiment_type,
         output_dist=args.output_dist,
         truth_time_start=args.truth_time_start,
+        bootstrap_n=args.bootstrap_n,
+        bootstrap_seed=args.bootstrap_seed,
     )
 
     region_df, global_df, temporal_df = split_results_for_display(results)
+    ci_map = results.get("confidence_intervals", {}) if isinstance(results, dict) else {}
+    if isinstance(ci_map, dict) and ci_map:
+        _attach_ci_columns(region_df, temporal_df, global_df, ci_map)
 
     if not region_df.empty:
         region_csv = region_df.copy()
@@ -110,6 +127,47 @@ def main() -> None:
         else:
             print(global_df.to_string(index=False))
     print(f"Wrote to {out_csv}")
+
+def _attach_ci_columns(
+    region_df: pd.DataFrame,
+    temporal_df: pd.DataFrame,
+    global_df: pd.DataFrame,
+    ci_map: dict,
+) -> None:
+    # Region metrics
+    if not region_df.empty and "region" in region_df.columns:
+        for col in [c for c in region_df.columns if c != "region"]:
+            lows, highs = [], []
+            for _, row in region_df.iterrows():
+                region = row["region"]
+                key = f"neural-activity.{region}.{col}"
+                if col == "truth-inp-decode-r2":
+                    key = f"truth-inp-decode.{region}"
+                ci = ci_map.get(key, {})
+                lows.append(ci.get("low", float("nan")))
+                highs.append(ci.get("high", float("nan")))
+            region_df[f"{col}_ci_low"] = lows
+            region_df[f"{col}_ci_high"] = highs
+
+    # Temporal metrics
+    if not temporal_df.empty:
+        row = temporal_df.iloc[0]
+        for col in list(temporal_df.columns):
+            ci = ci_map.get(f"temporal.{col}", {})
+            temporal_df[f"{col}_ci_low"] = [ci.get("low", float("nan"))]
+            temporal_df[f"{col}_ci_high"] = [ci.get("high", float("nan"))]
+
+    # Global structure metrics and any top-level scalars
+    if not global_df.empty:
+        for col in list(global_df.columns):
+            ci = ci_map.get(f"structure.{col}", None)
+            if ci is None:
+                ci = ci_map.get(f"aggregates.{col}", None)
+            if ci is None:
+                ci = ci_map.get(col, {})
+            global_df[f"{col}_ci_low"] = [ci.get("low", float("nan"))]
+            global_df[f"{col}_ci_high"] = [ci.get("high", float("nan"))]
+
 
 if __name__ == "__main__":
     main()
