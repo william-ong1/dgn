@@ -27,7 +27,7 @@ def standard_r2(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(r2_score(y_t, y_p))
 
 
-def neural_activity_reconstruction(truth: ArrayMap, submission: ArrayMap) -> dict[str, float]:
+def neural_activity_reconstruction(submission: ArrayMap, truth: ArrayMap) -> dict[str, float]:
     """
     Computes R2 scores for held-out and held-in neuron activity between truth and submission for each area.
     """
@@ -41,7 +41,7 @@ def neural_activity_reconstruction(truth: ArrayMap, submission: ArrayMap) -> dic
         mask[holdout_neurons.get(area, [])] = True
 
         r2_holdout = standard_r2(truth[area][:, :, mask], submission[area][:, :, mask]) if mask.any() else "n/a"
-        r2_heldin  = standard_r2(truth[area][:, :, ~mask], submission[area][:, :, ~mask]) if not mask.any() else "n/a"
+        r2_heldin = standard_r2(truth[area][:, :, ~mask], submission[area][:, :, ~mask]) if not mask.all() else "n/a"
 
         results[area_name] = {
             "r2_holdout": r2_holdout,
@@ -49,6 +49,7 @@ def neural_activity_reconstruction(truth: ArrayMap, submission: ArrayMap) -> dic
         }
 
     return results
+
 
 
 

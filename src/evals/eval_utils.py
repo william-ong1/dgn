@@ -78,3 +78,4 @@ def get_holdout_neurons(submission: ArrayMap) -> dict[str, np.ndarray]:
             holdout_neurons[k.removeprefix("meta-held-out-neuron-indices-")] = submission[k]
     
     return holdout_neurons
+
