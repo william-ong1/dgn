@@ -9,12 +9,11 @@ from .eval_utils import (
     ArrayMap,
     infer_submission_pred_time_len,
     load_session_arrays,
+    load_memory_network_connectome_and_ranks,
     slice_truth_for_time_alignment,
-    get_area_names,
-    get_holdout_neurons
 )
 
-from .metrics import neural_activity_reconstruction, standard_r2
+from .metrics import neural_activity_reconstruction, effectome_cosine_similarity
 
 
 def evaluate_submission(
@@ -22,7 +21,7 @@ def evaluate_submission(
     truth_h5: Path | str,
     config_dir: Path | str,
     experiment_type: str,
-    distribution: str,
+    output_dist: str,
     *,
     truth_time_start: int = 0,
 ) -> Any:
@@ -41,34 +40,40 @@ def evaluate_submission(
     truth = slice_truth_for_time_alignment(truth_full, truth_time_start=truth_time_start, pred_time_len=pred_t)
 
     if experiment_type == "memory_network":
-        return evaluate_memory_network_submission(submission, truth, config_path, distribution)
+        return evaluate_memory_network_submission(submission, truth, config_path, output_dist)
     if experiment_type == "pass_decision":
-        return evaluate_pass_decision_submission(submission, truth, config_path, distribution)
+        return evaluate_pass_decision_submission(submission, truth, config_path, output_dist)
     if experiment_type == "multi_task":
-        return evaluate_multi_task_submission(submission, truth, config_path, distribution)
+        return evaluate_multi_task_submission(submission, truth, config_path, output_dist)
 
 
-def evaluate_memory_network_submission(submission: ArrayMap, truth: ArrayMap, config_dir: Path, distribution: str) -> Any:
+def evaluate_memory_network_submission(submission: ArrayMap, truth: ArrayMap, config_dir: Path, output_dist: str) -> Any:
     """Evaluate a memory network submission against ground truth."""
-    # spec = load_memory_network_spec(config_dir)
-    
+
     results = {}
-    results.update(neural_activity_reconstruction(submission, truth, distribution))
+
+    # Evaluate neural activity reconstruction
+    neural_activity_reconstruction_results = neural_activity_reconstruction(submission, truth, output_dist)
+    results.update(neural_activity_reconstruction_results)
+
+    # Evaluate effectome recovery (communication)
+    effectome_recovery_results = effectome_cosine_similarity(submission, config_dir)
+    results.update(effectome_recovery_results)
 
     return results
 
 
-def evaluate_pass_decision_submission(submission: ArrayMap, truth: ArrayMap, config_dir: Path, distribution: str) -> Any:
+def evaluate_pass_decision_submission(submission: ArrayMap, truth: ArrayMap, config_dir: Path, output_dist: str) -> Any:
     """Evaluate a pass decision submission against ground truth."""
     
     results = {}
-    results.update(neural_activity_reconstruction(submission, truth, distribution))
+    results.update(neural_activity_reconstruction(submission, truth, output_dist))
     return results
 
 
-def evaluate_multi_task_submission(submission: ArrayMap, truth: ArrayMap, config_dir: Path, distribution: str) -> Any:
+def evaluate_multi_task_submission(submission: ArrayMap, truth: ArrayMap, config_dir: Path, output_dist: str) -> Any:
     """Evaluate a multi-task submission against ground truth."""
 
     results = {}
-    results.update(neural_activity_reconstruction(submission, truth, distribution))
+    results.update(neural_activity_reconstruction(submission, truth, output_dist))
     return results

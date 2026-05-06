@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-
 import h5py
 import numpy as np
+import yaml
+import pandas as pd
+from typing import Any
 
 # ArrayMap is a dictionary of HDF5 dataset names (e.g. "area-A0") and their corresponding numpy arrays.
 ArrayMap = dict[str, np.ndarray]
@@ -78,4 +80,31 @@ def get_holdout_neurons(submission: ArrayMap) -> dict[str, np.ndarray]:
             holdout_neurons[k.removeprefix("meta-held-out-neuron-indices-")] = submission[k]
     
     return holdout_neurons
+
+
+# Load memory-network connectome and ranks from model config
+def load_memory_network_connectome_and_ranks(config_dir: Path) -> tuple[np.ndarray, np.ndarray]:
+    model_cfg = config_dir / "model" / "model.yaml"
+
+    with model_cfg.open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+
+    connectome = np.asarray(cfg["connectome"], dtype=np.int64)
+    ranks = np.asarray(cfg["ranks"], dtype=np.int64).reshape(-1)
+
+    return connectome, ranks
+
+
+# Flatten nested evaluation dicts into one row per metric.
+def evaluation_results_to_dataframe(results: dict[str, Any]) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for key, val in results.items():
+        if isinstance(val, dict):
+            for metric_name, metric_val in val.items():
+                if isinstance(metric_val, (dict, list)):
+                    metric_val = str(metric_val)
+                rows.append({"group": key, "metric": metric_name, "value": metric_val})
+        else:
+            rows.append({"group": "global", "metric": key, "value": val})
+    return pd.DataFrame(rows)
 

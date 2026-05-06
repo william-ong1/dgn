@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import numpy as np
 from sklearn.metrics import r2_score
-
+from pathlib import Path
 import torch
 import torch.nn.functional as F
+
 
 from .eval_utils import (
     ArrayMap,
     get_area_names,
-    get_holdout_neurons
+    get_holdout_neurons,
+    load_memory_network_connectome_and_ranks
 )
 
 
@@ -49,6 +51,33 @@ def neural_activity_reconstruction(submission: ArrayMap, truth: ArrayMap, distri
     return results
 
 
+def effectome_cosine_similarity(submission: ArrayMap, config_dir: Path):
+    """ 
+    Computes cosine similarity for effectome and inferred-input scores between truth and submission.
+    """
+    results = {}
+    true_connectome, true_ranks = load_memory_network_connectome_and_ranks(config_dir)
+
+    if "effectome-scores" in submission:
+        pred_effectome_scores = submission.get("effectome-scores", None)
+        pred_effectome = (np.asarray(pred_effectome_scores, dtype=np.float64) > 0).astype(np.int64)
+        np.fill_diagonal(pred_effectome, 0)
+        np.fill_diagonal(true_connectome, 0)
+        cosine_score = cosine_similarity(pred_effectome, true_connectome * true_ranks.reshape(-1, 1))
+        results.update({
+            "effectome-cos-sim": cosine_score,
+        })
+        
+    if "inferred-input-scores" in submission:
+        pred_input_scores = submission.get("inferred-input-scores", None)
+        cosine_score = cosine_similarity(pred_input_scores, true_ranks)
+        results.update({
+            "inferred-input-cos-sim": cosine_score,
+        })
+
+    return results
+
+
 def standard_r2(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """
     Standard coefficient of determination R² on flattened arrays.
@@ -62,7 +91,7 @@ def standard_r2(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     if np.var(y_t) < 1e-12:
         return float("nan")
     return float(r2_score(y_t, y_p))
-    
+
 
 def mcfadden_r2_poisson(data: np.ndarray, output_params: np.ndarray, *, reduction = "mean", null_dims: tuple[int, ...] = (0,)) -> float:
     """
@@ -104,3 +133,18 @@ def mcfadden_r2_poisson(data: np.ndarray, output_params: np.ndarray, *, reductio
         r2 = 1 - num / denom
         r2 = torch.where(torch.isclose(denom, torch.zeros_like(denom)), torch.full_like(r2, float("nan")), r2)
         return r2.detach().cpu().numpy()
+
+
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    """
+    Cosine similarity between two arrays.
+    """
+    a = np.asarray(a, dtype=np.float64).reshape(-1)
+    b = np.asarray(b, dtype=np.float64).reshape(-1)
+
+    na = float(np.linalg.norm(a))
+    nb = float(np.linalg.norm(b))
+    if na == 0.0 or nb == 0.0:
+        return float("nan")
+        
+    return float(np.dot(a, b) / (na * nb))
