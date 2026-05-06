@@ -69,7 +69,7 @@ def main() -> None:
         truth_time_start=args.truth_time_start,
     )
 
-    region_df, global_df = split_results_for_display(results)
+    region_df, global_df, temporal_df = split_results_for_display(results)
 
     if not region_df.empty:
         region_csv = region_df.copy()
@@ -83,7 +83,13 @@ def main() -> None:
     else:
         global_csv = pd.DataFrame(columns=["section"])
 
-    dataframe = pd.concat([region_csv, global_csv], ignore_index=True, sort=False)
+    if not temporal_df.empty:
+        temporal_csv = temporal_df.copy()
+        temporal_csv.insert(0, "section", "temporal")
+    else:
+        temporal_csv = pd.DataFrame(columns=["section"])
+
+    dataframe = pd.concat([region_csv, temporal_csv, global_csv], ignore_index=True, sort=False)
     out_csv = args.output_csv.expanduser().resolve()
     dataframe.to_csv(out_csv, index=False)
 
@@ -93,6 +99,11 @@ def main() -> None:
             print("(none)")
         else:
             print(region_df.to_string(index=False))
+        print("\nTemporal metrics:")
+        if temporal_df.empty:
+            print("(none)")
+        else:
+            print(temporal_df.to_string(index=False))
         print("\nGlobal metrics:")
         if global_df.empty:
             print("(none)")

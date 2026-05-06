@@ -105,7 +105,7 @@ def load_memory_network_lag(config_dir: Path) -> int:
 
 
 # Split results for display on the dashboard
-def split_results_for_display(results: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+def split_results_for_display(results: dict) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     region_rows: dict[str, dict] = {}
     global_metrics: dict[str, float] = {}
 
@@ -124,6 +124,11 @@ def split_results_for_display(results: dict) -> tuple[pd.DataFrame, pd.DataFrame
     if isinstance(structure, dict):
         global_metrics.update(structure)
 
+    temporal = results.get("temporal", {})
+    temporal_metrics: dict[str, float] = {}
+    if isinstance(temporal, dict):
+        temporal_metrics.update(temporal)
+
     # Backward compatibility for any top-level scalar metrics.
     for key, value in results.items():
         if not isinstance(value, dict):
@@ -135,4 +140,5 @@ def split_results_for_display(results: dict) -> tuple[pd.DataFrame, pd.DataFrame
         region_df = region_df.reset_index()
 
     global_df = pd.DataFrame([global_metrics]) if global_metrics else pd.DataFrame()
-    return region_df, global_df
+    temporal_df = pd.DataFrame([temporal_metrics]) if temporal_metrics else pd.DataFrame()
+    return region_df, global_df, temporal_df

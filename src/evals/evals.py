@@ -8,12 +8,14 @@ from typing import Any
 from .eval_utils import (
     ArrayMap,
     infer_submission_pred_time_len,
+    load_memory_network_lag,
     load_session_arrays,
     slice_truth_for_time_alignment,
 )
 
 from .metrics import (
     effectome_cosine_similarity,
+    lag_recovery_memory_network,
     message_latent_reconstruction,
     message_reconstruction,
     neural_activity_reconstruction,
@@ -78,6 +80,14 @@ def evaluate_memory_network_submission(submission: ArrayMap, truth: ArrayMap, co
     # Evaluate truth input decoding
     truth_inp_decode_results = truth_input_decoding_memory_network(truth, submission, config_dir)
     results["truth-inp-decode"] = truth_inp_decode_results
+
+    # Evaluate temporal lag recovery
+    temporal_results = lag_recovery_memory_network(truth, submission)
+    true_lag = float(load_memory_network_lag(config_dir))
+    temporal_results["lag-true"] = true_lag
+    pred_lag = temporal_results.get("lag-pred", float("nan"))
+    temporal_results["lag-error"] = abs(pred_lag - true_lag)
+    results["temporal"] = temporal_results
 
     return results
 

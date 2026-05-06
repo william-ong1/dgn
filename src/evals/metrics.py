@@ -1,4 +1,4 @@
-""" Evaluation metrics to evaluate neural activity reconstruction, communication recovery, and message recovery."""
+""" Evaluation metrics to evaluate neural activity reconstruction, connectivity recovery, and message recovery."""
 
 from __future__ import annotations
 
@@ -131,7 +131,7 @@ def truth_input_decoding_memory_network(
 
 def message_reconstruction(truth: ArrayMap, submission: ArrayMap) -> dict[str, float]:
     """
-    Message reconstruction R² by decoding the truth generator messages.
+    Message reconstruction R² by decoding the truth messages.
     """
     if "message-mesgs" not in submission: return {}
     y = np.asarray(truth["message-mesgs"], dtype=np.float64)
@@ -149,7 +149,47 @@ def message_latent_reconstruction(truth: ArrayMap, submission: ArrayMap) -> dict
     return {"message-latents-r2": decode_r2_from_features(y, y_hat)}
 
 
+def lag_recovery_memory_network(truth: ArrayMap, submission: ArrayMap, max_lag: int = 5) -> dict[str, float]:
+    """
+    Lag scan using model-vs-truth message trajectories directly.
+
+    For lag in [-max_lag, max_lag], align model/truth message tensors in time and score
+    decode R^2 (truth decoded from model features). Pick lag with highest R^2.
+
+    Returns:
+      - lag-pred: best lag (signed)
+      - lag-error: abs(best lag), kept for backward compatibility
+    """
+
+    if "message-mesgs" not in submission:
+        return {"lag-pred": float("nan")}
+
+    X = np.asarray(submission["message-mesgs"], dtype=np.float64)
+    Y = np.asarray(truth["message-mesgs"], dtype=np.float64)
+
+    best_lag = 0
+    best_r2 = -np.inf
+
+    # Scan lags from 0 to max_lag.
+    for lag in range(-max_lag, max_lag + 1):
+        x_aligned, y_aligned = _align_source_delay(X, Y, lag)
+        if x_aligned is None:
+            continue
+
+        # Model/truth message feature widths may differ; decode handles this.
+        score = decode_r2_from_features(y_aligned, x_aligned)
+        if np.isfinite(score) and score > best_r2:
+            best_r2 = score
+            best_lag = lag
+
+    if not np.isfinite(best_r2):
+        return {"lag-pred": float("nan")}
+        
+    return {"lag-pred": float(best_lag)}
+
+
 def decode_r2_from_features(y: np.ndarray, y_hat: np.ndarray) -> float:
+    """ Decode R² from features, splitting into train and test sets and fitting a ridge decoder."""
     n_batch = y.shape[0]
     train_idx, test_idx = train_test_split(np.arange(n_batch), test_size=0.2, random_state=0, shuffle=True)
 
@@ -234,3 +274,17 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
         return float("nan")
         
     return float(np.dot(a, b) / (na * nb))
+
+
+def _align_source_delay(X_tgt: np.ndarray, Y_src: np.ndarray, lag: int) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """
+    Align target features X_tgt(t) with delayed source inputs Y_src(t-lag).
+    """
+    T = min(X_tgt.shape[1], Y_src.shape[1])
+    if T <= 1 or lag < 0 or lag >= T:
+        return None, None
+    Xc = X_tgt[:, :T]
+    Yc = Y_src[:, :T]
+    if lag == 0:
+        return Xc, Yc
+    return Xc[:, lag:], Yc[:, :-lag]
