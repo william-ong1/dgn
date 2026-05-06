@@ -53,7 +53,7 @@ def evaluate_memory_network_submission(submission: ArrayMap, truth: ArrayMap, co
     # spec = load_memory_network_spec(config_dir)
     
     results = {}
-    results.update(neural_activity_reconstruction(submission, truth))
+    results.update(neural_activity_reconstruction(submission, truth, distribution))
 
     return results
 
@@ -62,10 +62,13 @@ def evaluate_pass_decision_submission(submission: ArrayMap, truth: ArrayMap, con
     """Evaluate a pass decision submission against ground truth."""
     
     results = {}
-    results.update(neural_activity_reconstruction(submission, truth))
+    results.update(neural_activity_reconstruction(submission, truth, distribution))
     return results
 
 
 def evaluate_multi_task_submission(submission: ArrayMap, truth: ArrayMap, config_dir: Path, distribution: str) -> Any:
     """Evaluate a multi-task submission against ground truth."""
-    pass
+
+    results = {}
+    results.update(neural_activity_reconstruction(submission, truth, distribution))
+    return results
