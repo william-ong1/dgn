@@ -14,7 +14,8 @@ from .eval_utils import (
 
 from .metrics import (
     effectome_cosine_similarity,
-    message_reconstruction_memory_network,
+    message_latent_reconstruction,
+    message_reconstruction,
     neural_activity_reconstruction,
     truth_input_decoding_memory_network
 )
@@ -64,12 +65,14 @@ def evaluate_memory_network_submission(submission: ArrayMap, truth: ArrayMap, co
     effectome_recovery_results = effectome_cosine_similarity(submission, config_dir)
 
     # Evaluate message reconstruction
-    message_recon_results = message_reconstruction_memory_network(truth, submission)
+    message_recon_results = message_reconstruction(truth, submission)
+    message_latent_recon_results = message_latent_reconstruction(truth, submission)
 
     # Combine effectome recovery and message reconstruction results
     struct = {}
     struct.update(effectome_recovery_results)
     struct.update(message_recon_results)
+    struct.update(message_latent_recon_results)
     results["structure"] = struct
 
     # Evaluate truth input decoding

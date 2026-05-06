@@ -131,16 +131,28 @@ def truth_input_decoding_memory_network(
 
 def message_reconstruction(truth: ArrayMap, submission: ArrayMap) -> dict[str, float]:
     """
-    Message reconstruction R² by decoding the truth generator messages from submission
-    message features with a ridge model and reports held-out trial R².
+    Message reconstruction R² by decoding the truth generator messages.
     """
+    if "message-mesgs" not in submission: return {}
     y = np.asarray(truth["message-mesgs"], dtype=np.float64)
     y_hat = np.asarray(submission["message-mesgs"], dtype=np.float64)
+    return {"message-r2": decode_r2_from_features(y, y_hat)}
 
+
+def message_latent_reconstruction(truth: ArrayMap, submission: ArrayMap) -> dict[str, float]:
+    """
+    Message latent reconstruction R² by decoding truth `message-latents`.
+    """
+    if "message-latents" not in submission: return {}
+    y = np.asarray(truth["message-latents"], dtype=np.float64)
+    y_hat = np.asarray(submission["message-latents"], dtype=np.float64)
+    return {"message-latents-r2": decode_r2_from_features(y, y_hat)}
+
+
+def decode_r2_from_features(y: np.ndarray, y_hat: np.ndarray) -> float:
     n_batch = y.shape[0]
     train_idx, test_idx = train_test_split(np.arange(n_batch), test_size=0.2, random_state=0, shuffle=True)
 
-    # Decode truth generator messages from submission message features
     x_train = y_hat[train_idx].reshape(-1, y_hat.shape[-1])
     y_train = y[train_idx].reshape(-1, y.shape[-1])
     x_test = y_hat[test_idx].reshape(-1, y_hat.shape[-1])
@@ -149,8 +161,7 @@ def message_reconstruction(truth: ArrayMap, submission: ArrayMap) -> dict[str, f
     decoder = Ridge(alpha=1.0)
     decoder.fit(x_train, y_train)
     y_pred = decoder.predict(x_test)
-
-    return {"message-r2": standard_r2(y_test, y_pred)}
+    return standard_r2(y_test, y_pred)
 
 
 def standard_r2(y_true: np.ndarray, y_pred: np.ndarray) -> float:
