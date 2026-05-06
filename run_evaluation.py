@@ -2,8 +2,9 @@
 
 import argparse
 from pathlib import Path
-from src.evals import evaluate_submission
+from src.evals.evals import evaluate_submission
 
+# Main function to run the evaluation script
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--submission-h5", type=Path, help="Path to submission HDF5 file")
@@ -17,21 +18,33 @@ def main() -> None:
         help="Which benchmark the HDF5 files belong to.",
     )
     parser.add_argument(
-        "--observation-type",
+        "--distribution",
         type=str,
         required=True,
         choices=("gaussian", "poisson"),
         help="How activity is represented: Gaussian (rates / continuous) vs Poisson (counts).",
     )
+    parser.add_argument(
+        "--truth-time-start",
+        type=int,
+        default=0,
+        metavar="k",
+        help=(
+            "Truth time index that aligns with prediction time 0. Use 0 when predictions cover the full truth window."
+        ),
+    )
     args = parser.parse_args()
 
-    evaluate_submission(
-      submission_h5=args.submission_h5,
-      truth_h5=args.truth_h5,
-      config_dir=args.config_dir,
-      experiment_type=args.experiment_type,
-      observation_type=args.observation_type,
-    )
+    results = evaluate_submission(
+            submission_h5=args.submission_h5,
+            truth_h5=args.truth_h5,
+            config_dir=args.config_dir,
+            experiment_type=args.experiment_type,
+            distribution=args.distribution,
+            truth_time_start=args.truth_time_start,
+        )
+
+    print(results)
 
 
 if __name__ == "__main__":
