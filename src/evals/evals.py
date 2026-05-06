@@ -9,11 +9,14 @@ from .eval_utils import (
     ArrayMap,
     infer_submission_pred_time_len,
     load_session_arrays,
-    load_memory_network_connectome_and_ranks,
     slice_truth_for_time_alignment,
 )
 
-from .metrics import neural_activity_reconstruction, effectome_cosine_similarity
+from .metrics import (
+    effectome_cosine_similarity,
+    neural_activity_reconstruction,
+    truth_input_decoding_r2,
+)
 
 
 def evaluate_submission(
@@ -54,11 +57,15 @@ def evaluate_memory_network_submission(submission: ArrayMap, truth: ArrayMap, co
 
     # Evaluate neural activity reconstruction
     neural_activity_reconstruction_results = neural_activity_reconstruction(submission, truth, output_dist)
-    results.update(neural_activity_reconstruction_results)
+    results["neural-activity"] = neural_activity_reconstruction_results
 
-    # Evaluate effectome recovery (communication)
+    # Evaluate effectome recovery
     effectome_recovery_results = effectome_cosine_similarity(submission, config_dir)
-    results.update(effectome_recovery_results)
+    results["structure"] = effectome_recovery_results
+
+    # Evaluate truth input decoding
+    truth_inp_decode_results = truth_input_decoding_r2(truth, submission, config_dir)
+    results["truth-inp-decode"] = truth_inp_decode_results
 
     return results
 

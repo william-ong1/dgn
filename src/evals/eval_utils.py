@@ -94,17 +94,45 @@ def load_memory_network_connectome_and_ranks(config_dir: Path) -> tuple[np.ndarr
 
     return connectome, ranks
 
+# Load memory-network lag from model config
+def load_memory_network_lag(config_dir: Path) -> int:
+    model_cfg = config_dir / "model" / "model.yaml"
+    
+    with model_cfg.open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+        
+    return int(cfg["lag"])
 
-# Flatten nested evaluation dicts into one row per metric.
-def evaluation_results_to_dataframe(results: dict[str, Any]) -> pd.DataFrame:
-    rows: list[dict[str, Any]] = []
-    for key, val in results.items():
-        if isinstance(val, dict):
-            for metric_name, metric_val in val.items():
-                if isinstance(metric_val, (dict, list)):
-                    metric_val = str(metric_val)
-                rows.append({"group": key, "metric": metric_name, "value": metric_val})
-        else:
-            rows.append({"group": "global", "metric": key, "value": val})
-    return pd.DataFrame(rows)
 
+# Split results for display on the dashboard
+def split_results_for_display(results: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+    region_rows: dict[str, dict] = {}
+    global_metrics: dict[str, float] = {}
+
+    neural = results.get("neural-activity", {})
+    if isinstance(neural, dict):
+        for region, metrics in neural.items():
+            if isinstance(metrics, dict):
+                region_rows.setdefault(region, {}).update(metrics)
+
+    truth_decode = results.get("truth-inp-decode", {})
+    if isinstance(truth_decode, dict):
+        for region, value in truth_decode.items():
+            region_rows.setdefault(region, {})["truth-inp-decode-r2"] = value
+
+    structure = results.get("structure", {})
+    if isinstance(structure, dict):
+        global_metrics.update(structure)
+
+    # Backward compatibility for any top-level scalar metrics.
+    for key, value in results.items():
+        if not isinstance(value, dict):
+            global_metrics[key] = value
+
+    region_df = pd.DataFrame.from_dict(region_rows, orient="index")
+    if not region_df.empty:
+        region_df.index.name = "region"
+        region_df = region_df.reset_index()
+
+    global_df = pd.DataFrame([global_metrics]) if global_metrics else pd.DataFrame()
+    return region_df, global_df

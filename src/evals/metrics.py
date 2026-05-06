@@ -1,19 +1,21 @@
-""" Evaluation metrics for the benchmark to evaluate neural activity reconstruction, communication recovery, and message recovery."""
+""" Evaluation metrics to evaluate neural activity reconstruction, communication recovery, and message recovery."""
 
 from __future__ import annotations
 
 import numpy as np
+from sklearn.linear_model import Ridge
 from sklearn.metrics import r2_score
 from pathlib import Path
 import torch
 import torch.nn.functional as F
+from sklearn.model_selection import train_test_split
 
 
 from .eval_utils import (
     ArrayMap,
     get_area_names,
     get_holdout_neurons,
-    load_memory_network_connectome_and_ranks
+    load_memory_network_connectome_and_ranks,
 )
 
 
@@ -34,8 +36,8 @@ def neural_activity_reconstruction(submission: ArrayMap, truth: ArrayMap, distri
         r2_heldin = standard_r2(truth[area][:, :, ~mask], submission[area][:, :, ~mask]) if not mask.all() else "n/a"
 
         results[area_name] = {
-                "r2_holdout": r2_holdout,
-                "r2_heldin": r2_heldin,
+                "r2-holdout": r2_holdout,
+                "r2-heldin": r2_heldin,
         }
 
         if distribution == "poisson":
@@ -74,6 +76,55 @@ def effectome_cosine_similarity(submission: ArrayMap, config_dir: Path):
         results.update({
             "inferred-input-cos-sim": cosine_score,
         })
+
+    return results
+
+
+def truth_input_decoding_r2(
+    truth: ArrayMap,
+    submission: ArrayMap,
+    config_dir: Path,
+    ridge_alpha: float = 1.0,
+    test_size: float = 0.2,
+    random_state: int = 0,
+) -> dict[str, float]:
+    """
+    Compute decodability of each region's ground-truth input from the region's hidden activity, returning held out trial-level R² scores.
+    """
+    _, ranks = load_memory_network_connectome_and_ranks(config_dir)
+    area_names = get_area_names(submission)
+
+    # Ground-truth input to all regions
+    y_all = np.asarray(truth["truth-inp"], dtype=np.float64)
+    n_batch = y_all.shape[0]
+    train_idx, test_idx = train_test_split(np.arange(n_batch), test_size=test_size, random_state=random_state, shuffle=True)
+
+    results = {}
+    offset = 0
+
+    for i, name in enumerate(area_names):
+        r = int(ranks[i])
+        sl = slice(offset, offset + r)
+
+        # Ground-truth input to the region
+        yi_all = y_all[..., sl]
+
+        # Hidden activity from the region
+        xi_all = np.asarray(submission[f"area-{name}"], dtype=np.float64)
+
+        x_train = xi_all[train_idx].reshape(-1, xi_all.shape[-1])
+        y_train = yi_all[train_idx].reshape(-1, r)
+        x_test = xi_all[test_idx].reshape(-1, xi_all.shape[-1])
+        y_test = yi_all[test_idx].reshape(-1, r)
+
+        # Train decoder on held-in trials
+        decoder = Ridge(alpha=ridge_alpha)
+        decoder.fit(x_train, y_train)
+
+        # Test decoder on held-out trials
+        y_pred = decoder.predict(x_test)
+        results[name] = float(r2_score(y_test, y_pred, multioutput="uniform_average"))
+        offset += r
 
     return results
 

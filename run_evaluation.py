@@ -2,12 +2,11 @@
 
 import argparse
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 
 from src.evals.evals import evaluate_submission
-from src.evals.eval_utils import evaluation_results_to_dataframe
+from src.evals.eval_utils import split_results_for_display
 
 
 # Main function to run the evaluation script
@@ -70,12 +69,35 @@ def main() -> None:
         truth_time_start=args.truth_time_start,
     )
 
-    dataframe = evaluation_results_to_dataframe(results)
+    region_df, global_df = split_results_for_display(results)
+
+    if not region_df.empty:
+        region_csv = region_df.copy()
+        region_csv.insert(0, "section", "region")
+    else:
+        region_csv = pd.DataFrame(columns=["section"])
+
+    if not global_df.empty:
+        global_csv = global_df.copy()
+        global_csv.insert(0, "section", "global")
+    else:
+        global_csv = pd.DataFrame(columns=["section"])
+
+    dataframe = pd.concat([region_csv, global_csv], ignore_index=True, sort=False)
     out_csv = args.output_csv.expanduser().resolve()
     dataframe.to_csv(out_csv, index=False)
 
     with pd.option_context("display.max_rows", None, "display.max_columns", None, "display.width", 120):
-        print(dataframe.to_string(index=False))
+        print("Region-specific metrics:")
+        if region_df.empty:
+            print("(none)")
+        else:
+            print(region_df.to_string(index=False))
+        print("\nGlobal metrics:")
+        if global_df.empty:
+            print("(none)")
+        else:
+            print(global_df.to_string(index=False))
     print(f"Wrote to {out_csv}")
 
 if __name__ == "__main__":
