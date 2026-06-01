@@ -7,6 +7,7 @@ from datetime import datetime
 import pytorch_lightning as pl
 from hydra import compose, initialize_config_dir
 from hydra.utils import instantiate
+from omegaconf import OmegaConf
 
 
 def save_run_configs(run_dir_path: Path, cfg_dir: Path) -> None:
@@ -40,6 +41,7 @@ def run_data_generation(
     run_dir: str,
     seed: int = 42,
     ckpt_path: str | None = None,
+    overrides: list[str] | None = None,
 ) -> None:
     """
     Run the data generation process.
@@ -49,6 +51,8 @@ def run_data_generation(
         run_dir: Directory for this run (created if needed; also becomes the process cwd).
         seed: RNG seed (default 42 unless overridden via CLI).
         ckpt_path: Optional ``.ckpt`` for ``Trainer.fit(ckpt_path=...)``.
+        overrides: Hydra-style ``key=value`` overrides, e.g.
+            ``["model.hidden_size=128", "model.input_weight_init_var_scale=2.0"]``.
     """
 
     # Register the project root and src directory to the Python path
@@ -62,8 +66,9 @@ def run_data_generation(
     cfg_dir = config_file.parent
     cfg_name = config_file.stem
 
+    overrides = list(overrides) if overrides else []
     with initialize_config_dir(version_base="1.1", config_dir=str(cfg_dir)):
-        config_obj = compose(config_name=cfg_name)
+        config_obj = compose(config_name=cfg_name, overrides=overrides)
 
     # Create the run directory and save the configurations
     run_dir_path = Path(run_dir).expanduser().resolve()
@@ -72,6 +77,10 @@ def run_data_generation(
         run_dir_path=run_dir_path,
         cfg_dir=cfg_dir,
     )
+
+    OmegaConf.save(config_obj, run_dir_path / "resolved_config.yaml")
+    if overrides:
+        (run_dir_path / "overrides.txt").write_text("\n".join(overrides) + "\n")
 
     # Resolve the checkpoint path
     resolved_ckpt = (
@@ -141,6 +150,32 @@ def main() -> None:
         ),
     )
 
+    parser.add_argument(
+        "--hidden_size",
+        type=int,
+        default=None,
+        help="Convenience override for model.hidden_size (neuron count per area).",
+    )
+
+    parser.add_argument(
+        "--input_weight_init_var_scale",
+        type=float,
+        default=None,
+        help="Convenience override for model.input_weight_init_var_scale.",
+    )
+
+    parser.add_argument(
+        "-o",
+        "--override",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help=(
+            "Hydra-style override (repeatable). "
+            "Example: --override model.noise=0.1 --override model.memory=4"
+        ),
+    )
+
     args = parser.parse_args()
     project_root = Path(__file__).resolve().parent
 
@@ -150,9 +185,30 @@ def main() -> None:
     if not config_path.exists():
         raise FileNotFoundError(f"Config not found: {config_path}")
 
-    # Get the run directory
+    # Build Hydra override list from convenience flags + generic --override.
+    overrides: list[str] = []
+    if args.hidden_size is not None:
+        overrides.append(f"model.hidden_size={args.hidden_size}")
+    if args.input_weight_init_var_scale is not None:
+        overrides.append(
+            f"model.input_weight_init_var_scale={args.input_weight_init_var_scale}"
+        )
+    overrides.extend(args.override)
+
+    # Build a default run_name that encodes the swept knobs so re-runs
+    # don't clobber each other.
+    suffix_parts: list[str] = []
+    if args.hidden_size is not None:
+        suffix_parts.append(f"h{args.hidden_size}")
+    if args.input_weight_init_var_scale is not None:
+        suffix_parts.append(f"ws{args.input_weight_init_var_scale}")
+    suffix = ("_" + "_".join(suffix_parts)) if suffix_parts else ""
+
     runs_root = project_root / "runs"
-    run_name = args.run_name or f"{args.experiment_name}_id{datetime.now().strftime('%y%m%d%H%M')}"
+    run_name = (
+        args.run_name
+        or f"{args.experiment_name}{suffix}_id{datetime.now().strftime('%y%m%d%H%M')}"
+    )
     run_dir = runs_root / run_name
 
     # Run the data generation process
@@ -161,6 +217,7 @@ def main() -> None:
         run_dir=str(run_dir),
         seed=args.seed,
         ckpt_path=args.ckpt_path,
+        overrides=overrides,
     )
 
 
