@@ -139,6 +139,7 @@ class MemoryNetwork(DGNBase):
         hidden_size: int = 64,
         lr: float = 4.0e-3,
         input_weight_init_var_scale: float = 1.0,
+        rnn_type: str = 'grucell',
         
         ext_input_dim: int = 0,
         ext_input_amp: int = -1,
@@ -166,6 +167,8 @@ class MemoryNetwork(DGNBase):
             lr: Learning rate.
             input_weight_init_var_scale: Scale factor for the initial variance
                 of the RNN input weights.
+            rnn_type: Recurrent cell type for each area. Either 'grucell'
+                (gated) or 'rnncell' (vanilla tanh RNN).
 
             ext_input_dim: Dimensionality of external perturbation inputs.
                 Perturbations are implemented as a step input from time steps
@@ -203,6 +206,8 @@ class MemoryNetwork(DGNBase):
                 hps.hidden_size,
                 output_dims,
                 None,
+                rnn_nonlinearity="tanh",
+                rnn_type=hps.rnn_type,
             )
         self.area_names = list(self.areas.keys())
         
