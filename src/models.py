@@ -432,6 +432,7 @@ class PassDecision(DGNBase):
         rep_coef: float = 0.0,
         binary_output: bool = True,
         rnn_nonlinearity: str = "tanh",
+        rnn_type: str = "grucell",
     ):
         """
         Args:
@@ -453,6 +454,8 @@ class PassDecision(DGNBase):
                 a binarized cumulative input; if False, MSE against the
                 cumulative input.
             rnn_nonlinearity: Nonlinearity for ``RNNChannel`` cells.
+            rnn_type: Recurrent cell type for each area. Either 'grucell'
+                (gated) or 'rnncell' (vanilla tanh RNN).
         """
         super().__init__()
         self.save_hyperparameters()
@@ -465,10 +468,12 @@ class PassDecision(DGNBase):
 
         # Pass area: stimulus + latent (input_dim)
         self.P_area = RNNChannel(hps.input_dim, hps.hidden_size, [hps.input_dim], 
-                                 None, rnn_nonlinearity=hps.rnn_nonlinearity)
+                                 None, rnn_nonlinearity=hps.rnn_nonlinearity,
+                                 rnn_type=hps.rnn_type)
         # Decision area: input + latent (input_dim)
         self.D_area = RNNChannel(hps.input_dim, hps.hidden_size, [hps.channel_size], 
-                                 None, rnn_nonlinearity=hps.rnn_nonlinearity)
+                                 None, rnn_nonlinearity=hps.rnn_nonlinearity,
+                                 rnn_type=hps.rnn_type)
 
         # Loss functions and decoders
         nonlinearity = "sigmoid" if hps.binary_output else None
