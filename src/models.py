@@ -278,9 +278,6 @@ class MemoryNetwork(DGNBase):
         # Main loop
         for t in range(time):
 
-            # Add hidden state noise
-            h = h + torch.randn_like(h) * self.h_noise_weight.reshape(-1, 1, hps.hidden_size).to(self.device)
-            
             # Setup variable storage per time t
             h_ias = []
             latents = torch.zeros(batch, hps.total_mesgs * hps.memory).to(self.device)
@@ -304,6 +301,9 @@ class MemoryNetwork(DGNBase):
                 mesgs_inp = mesgs_inp + channel_noise
                 mesgs_inp = torch.cat([mesgs_inp, self.ext_inputs[area_name][:, t]], dim=-1).to(self.device) # add ext inp
                 h_ia, mesgs_split = area(mesgs_inp, h[ia])
+                h_ia = h_ia + torch.randn_like(h_ia) * self.h_noise_weight[
+                    ia * hps.hidden_size : (ia + 1) * hps.hidden_size
+                ].reshape(1, -1).to(self.device)
                 
                 # Insert into mesgs_new
                 for ic in range(hps.num_areas):
@@ -500,13 +500,11 @@ class PassDecision(DGNBase):
         # Main loop
         for t in range(time):
 
-            # Add hidden state noise
-            h_p = h_p + torch.randn_like(h_p) * hps.noise_p
-            h_d = h_d + torch.randn_like(h_d) * hps.noise_d
-            
             # Forward pass through individual areas
             h_p, p_to_d = self.P_area(inp[:,t,:], h_p)
+            h_p = h_p + torch.randn_like(h_p) * hps.noise_p
             h_d, d_to_m = self.D_area(p_to_d, h_d)
+            h_d = h_d + torch.randn_like(h_d) * hps.noise_d
             
             # Decode decision
             d = self.decoder(d_to_m)
@@ -782,12 +780,7 @@ class MultiTaskNet(DGNBase):
 
         # Main loop
         for t in range(time):
-            
-            # Add noise to hidden states, h is shaped in the order of (hs of area 1, hs of area 2,...)
-            h = h + torch.randn_like(h) * self.h_noise_weight.reshape(1, -1).to(self.device)
-            if hps.use_global_latent:
-                g = g + torch.randn_like(g) * self.g_noise_weight.reshape(1, -1).to(self.device)
-            
+
             # Setup variable storage per time t
             h_ias, fixs = [], []
             mesgs_new = torch.zeros(batch, sum_nested(hps.total_mesgs)).to(self.device)
@@ -814,6 +807,9 @@ class MultiTaskNet(DGNBase):
 
                 # Forward pass through area
                 h_ia, mesg_ias = area(inp_ia, h[:, ia*hps.hidden_size: (ia+1)*hps.hidden_size])
+                h_ia = h_ia + torch.randn_like(h_ia) * self.h_noise_weight[
+                    ia * hps.hidden_size : (ia + 1) * hps.hidden_size
+                ].reshape(1, -1).to(self.device)
                 h_ias.append(h_ia)
                 
                 # Store fixation 
@@ -852,6 +848,7 @@ class MultiTaskNet(DGNBase):
             h = torch.cat(h_ias, dim=-1)
             if hps.use_global_latent:
                 g = self.global_latent_cell(h, g)
+                g = g + torch.randn_like(g) * self.g_noise_weight.reshape(1, -1).to(self.device)
                 self.global_latent_states[:, t] = g
             
             # Inter-area message delay (use past communicated mesgs)
