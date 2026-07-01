@@ -7,6 +7,7 @@ from typing import Any
 
 from .eval_utils import (
     ArrayMap,
+    continuous_activity_to_rates_map,
     infer_submission_pred_time_len,
     load_memory_network_lag,
     load_session_arrays,
@@ -19,6 +20,7 @@ from .metrics import (
     lag_recovery_memory_network,
     message_latent_reconstruction,
     message_reconstruction,
+    neural_activity_rate_reconstruction,
     neural_activity_reconstruction,
     truth_input_decoding_memory_network,
     truth_input_decoding_pass_decision,
@@ -38,6 +40,8 @@ def _collect_neural_activity_means(neural_activity: dict[str, dict]) -> dict[str
     held_in_vals: list[float] = []
     held_out_mcfadden_vals: list[float] = []
     held_in_mcfadden_vals: list[float] = []
+    held_out_rates_vals: list[float] = []
+    held_in_rates_vals: list[float] = []
     for metrics in neural_activity.values():
         if not isinstance(metrics, dict):
             continue
@@ -45,6 +49,8 @@ def _collect_neural_activity_means(neural_activity: dict[str, dict]) -> dict[str
         v_in = metrics.get("r2-held-in", float("nan"))
         v_out_m = metrics.get("r2-held-out-mcfadden", float("nan"))
         v_in_m = metrics.get("r2-held-in-mcfadden", float("nan"))
+        v_out_r = metrics.get("r2-held-out-rates", float("nan"))
+        v_in_r = metrics.get("r2-held-in-rates", float("nan"))
         if isinstance(v_out, (int, float, np.floating)):
             held_out_vals.append(float(v_out))
         if isinstance(v_in, (int, float, np.floating)):
@@ -53,6 +59,10 @@ def _collect_neural_activity_means(neural_activity: dict[str, dict]) -> dict[str
             held_out_mcfadden_vals.append(float(v_out_m))
         if isinstance(v_in_m, (int, float, np.floating)):
             held_in_mcfadden_vals.append(float(v_in_m))
+        if isinstance(v_out_r, (int, float, np.floating)):
+            held_out_rates_vals.append(float(v_out_r))
+        if isinstance(v_in_r, (int, float, np.floating)):
+            held_in_rates_vals.append(float(v_in_r))
 
     out = {
         "r2-held-out-mean": _safe_mean(held_out_vals),
@@ -62,7 +72,36 @@ def _collect_neural_activity_means(neural_activity: dict[str, dict]) -> dict[str
         out["r2-held-out-mcfadden-mean"] = _safe_mean(held_out_mcfadden_vals)
     if held_in_mcfadden_vals:
         out["r2-held-in-mcfadden-mean"] = _safe_mean(held_in_mcfadden_vals)
+    if held_out_rates_vals:
+        out["r2-held-out-rates-mean"] = _safe_mean(held_out_rates_vals)
+    if held_in_rates_vals:
+        out["r2-held-in-rates-mean"] = _safe_mean(held_in_rates_vals)
     return out
+
+
+def _prepare_rates_truth(
+    rates_truth_h5: Path | str,
+    *,
+    truth_time_start: int,
+    pred_time_len: int,
+    poisson_dt: float,
+    poisson_rate_max: float,
+) -> ArrayMap:
+    rates_path = Path(rates_truth_h5).expanduser().resolve()
+    if not rates_path.is_file():
+        raise FileNotFoundError(f"Rates truth HDF5 not found: {rates_path}")
+
+    activity_full = load_session_arrays(rates_path)
+    activity = slice_truth_for_time_alignment(
+        activity_full,
+        truth_time_start=truth_time_start,
+        pred_time_len=pred_time_len,
+    )
+    return continuous_activity_to_rates_map(
+        activity,
+        dt=poisson_dt,
+        rate_max=poisson_rate_max,
+    )
 
 
 def _collect_truth_decode_mean(truth_decode: dict[str, float]) -> dict[str, float]:
@@ -81,6 +120,9 @@ def evaluate_submission(
     output_dist: str,
     *,
     truth_time_start: int = 0,
+    rates_truth_h5: Path | str | None = None,
+    poisson_dt: float = 0.01,
+    poisson_rate_max: float = 40.0,
     bootstrap_n: int = 0,
     bootstrap_seed: int = 0,
 ) -> Any:
@@ -98,12 +140,28 @@ def evaluate_submission(
     pred_t = infer_submission_pred_time_len(submission)
     truth = slice_truth_for_time_alignment(truth_full, truth_time_start=truth_time_start, pred_time_len=pred_t)
 
+    rates_truth = None
+    if rates_truth_h5 is not None:
+        rates_truth = _prepare_rates_truth(
+            rates_truth_h5,
+            truth_time_start=truth_time_start,
+            pred_time_len=pred_t,
+            poisson_dt=poisson_dt,
+            poisson_rate_max=poisson_rate_max,
+        )
+
     if experiment_type == "memory_network":
-        results = evaluate_memory_network_submission(submission, truth, config_path, output_dist)
+        results = evaluate_memory_network_submission(
+            submission, truth, config_path, output_dist, rates_truth=rates_truth
+        )
     elif experiment_type == "pass_decision":
-        results = evaluate_pass_decision_submission(submission, truth, config_path, output_dist)
+        results = evaluate_pass_decision_submission(
+            submission, truth, config_path, output_dist, rates_truth=rates_truth
+        )
     elif experiment_type == "multi_task":
-        results = evaluate_multi_task_submission(submission, truth, config_path, output_dist)
+        results = evaluate_multi_task_submission(
+            submission, truth, config_path, output_dist, rates_truth=rates_truth
+        )
     else:
         results = {}
 
@@ -111,6 +169,7 @@ def evaluate_submission(
         results["confidence_intervals"] = _bootstrap_confidence_intervals(
             submission=submission,
             truth=truth,
+            rates_truth=rates_truth,
             config_dir=config_path,
             experiment_type=experiment_type,
             output_dist=output_dist,
@@ -120,10 +179,25 @@ def evaluate_submission(
     return results
 
 
+def _merge_neural_rate_metrics(
+    neural_activity: dict[str, dict],
+    rates_truth: ArrayMap | None,
+    submission: ArrayMap,
+) -> dict[str, dict]:
+    if rates_truth is None:
+        return neural_activity
+
+    rate_results = neural_activity_rate_reconstruction(submission, rates_truth)
+    for region, metrics in rate_results.items():
+        neural_activity.setdefault(region, {}).update(metrics)
+    return neural_activity
+
+
 def _bootstrap_confidence_intervals(
     *,
     submission: ArrayMap,
     truth: ArrayMap,
+    rates_truth: ArrayMap | None,
     config_dir: Path,
     experiment_type: str,
     output_dist: str,
@@ -144,13 +218,20 @@ def _bootstrap_confidence_intervals(
         idx = rng.integers(0, n_batch, size=n_batch)
         sub_b = _resample_arraymap(submission, idx, n_batch)
         tru_b = _resample_arraymap(truth, idx, n_batch)
+        rates_b = _resample_arraymap(rates_truth, idx, n_batch) if rates_truth is not None else None
 
         if experiment_type == "memory_network":
-            res_b = evaluate_memory_network_submission(sub_b, tru_b, config_dir, output_dist)
+            res_b = evaluate_memory_network_submission(
+                sub_b, tru_b, config_dir, output_dist, rates_truth=rates_b
+            )
         elif experiment_type == "pass_decision":
-            res_b = evaluate_pass_decision_submission(sub_b, tru_b, config_dir, output_dist)
+            res_b = evaluate_pass_decision_submission(
+                sub_b, tru_b, config_dir, output_dist, rates_truth=rates_b
+            )
         elif experiment_type == "multi_task":
-            res_b = evaluate_multi_task_submission(sub_b, tru_b, config_dir, output_dist)
+            res_b = evaluate_multi_task_submission(
+                sub_b, tru_b, config_dir, output_dist, rates_truth=rates_b
+            )
         else:
             continue
 
@@ -193,13 +274,25 @@ def _flatten_numeric_results(results: dict, prefix: str = "") -> dict[str, float
     return out
 
 
-def evaluate_memory_network_submission(submission: ArrayMap, truth: ArrayMap, config_dir: Path, output_dist: str) -> Any:
+def evaluate_memory_network_submission(
+    submission: ArrayMap,
+    truth: ArrayMap,
+    config_dir: Path,
+    output_dist: str,
+    *,
+    rates_truth: ArrayMap | None = None,
+) -> Any:
     """Evaluate a memory network submission against ground truth."""
 
     results = {}
 
     # Evaluate neural activity reconstruction
     neural_activity_reconstruction_results = neural_activity_reconstruction(submission, truth, output_dist)
+    neural_activity_reconstruction_results = _merge_neural_rate_metrics(
+        neural_activity_reconstruction_results,
+        rates_truth,
+        submission,
+    )
     results["neural-activity"] = neural_activity_reconstruction_results
 
     # Evaluate effectome recovery
@@ -236,13 +329,25 @@ def evaluate_memory_network_submission(submission: ArrayMap, truth: ArrayMap, co
     return results
 
 
-def evaluate_pass_decision_submission(submission: ArrayMap, truth: ArrayMap, config_dir: Path, output_dist: str) -> Any:
+def evaluate_pass_decision_submission(
+    submission: ArrayMap,
+    truth: ArrayMap,
+    config_dir: Path,
+    output_dist: str,
+    *,
+    rates_truth: ArrayMap | None = None,
+) -> Any:
     """Evaluate a pass decision submission against ground truth."""
     
     results = {}
 
     # Evaluate neural activity reconstruction
     neural_activity_reconstruction_results = neural_activity_reconstruction(submission, truth, output_dist)
+    neural_activity_reconstruction_results = _merge_neural_rate_metrics(
+        neural_activity_reconstruction_results,
+        rates_truth,
+        submission,
+    )
     results["neural-activity"] = neural_activity_reconstruction_results
 
     # Evaluate message reconstruction
@@ -272,9 +377,17 @@ def evaluate_pass_decision_submission(submission: ArrayMap, truth: ArrayMap, con
     return results
 
 
-def evaluate_multi_task_submission(submission: ArrayMap, truth: ArrayMap, config_dir: Path, output_dist: str) -> Any:
+def evaluate_multi_task_submission(
+    submission: ArrayMap,
+    truth: ArrayMap,
+    config_dir: Path,
+    output_dist: str,
+    *,
+    rates_truth: ArrayMap | None = None,
+) -> Any:
     """Evaluate a multi-task submission against ground truth."""
 
     results = {}
-    results.update(neural_activity_reconstruction(submission, truth, output_dist))
+    neural_activity = neural_activity_reconstruction(submission, truth, output_dist)
+    results.update(_merge_neural_rate_metrics(neural_activity, rates_truth, submission))
     return results

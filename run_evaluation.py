@@ -56,6 +56,27 @@ def main() -> None:
         default=0,
         help="Random seed for bootstrap resampling.",
     )
+    parser.add_argument(
+        "--rates-truth-h5",
+        type=Path,
+        default=None,
+        help=(
+            "Optional HDF5 with continuous area activity (e.g. gaussian.h5). "
+            "When set, also computes rates-vs-rates R² (λ per bin) for Poisson runs."
+        ),
+    )
+    parser.add_argument(
+        "--poisson-dt",
+        type=float,
+        default=0.01,
+        help="Bin width (s) used to convert continuous activity to λ = rate_hz * dt.",
+    )
+    parser.add_argument(
+        "--poisson-rate-max",
+        type=float,
+        default=40.0,
+        help="Max firing rate (Hz) used to convert continuous activity to λ.",
+    )
     args = parser.parse_args()
 
     submission_h5 = args.submission_h5.expanduser().resolve()
@@ -71,6 +92,8 @@ def main() -> None:
         raise SystemExit(f"Config directory not found: {config_dir}")
     if not model_yaml.is_file():
         raise SystemExit(f"Model config not found: {model_yaml}")
+    if args.rates_truth_h5 is not None and not args.rates_truth_h5.expanduser().resolve().is_file():
+        raise SystemExit(f"Rates truth HDF5 not found: {args.rates_truth_h5}")
 
     results = evaluate_submission(
         submission_h5=submission_h5,
@@ -79,6 +102,9 @@ def main() -> None:
         experiment_type=args.experiment_type,
         output_dist=args.output_dist,
         truth_time_start=args.truth_time_start,
+        rates_truth_h5=args.rates_truth_h5,
+        poisson_dt=args.poisson_dt,
+        poisson_rate_max=args.poisson_rate_max,
         bootstrap_n=args.bootstrap_n,
         bootstrap_seed=args.bootstrap_seed,
     )

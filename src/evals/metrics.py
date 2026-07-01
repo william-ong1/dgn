@@ -52,6 +52,44 @@ def neural_activity_reconstruction(submission: ArrayMap, truth: ArrayMap, distri
     return results
 
 
+def neural_activity_rate_reconstruction(submission: ArrayMap, truth_rates: ArrayMap) -> dict[str, dict[str, float]]:
+    """
+    Standard R² between predicted and ground-truth Poisson rates (λ per bin).
+
+    ``truth_rates`` should already be in the same units as the submission (expected
+    counts per bin), typically derived from continuous activity via ``activity_to_lam``.
+    """
+    results: dict[str, dict[str, float]] = {}
+    area_names = get_area_names(submission)
+    heldout_neurons = get_heldout_neurons(submission)
+
+    for area_name in area_names:
+        area = "area-" + area_name
+        if area not in truth_rates:
+            continue
+
+        mask = np.zeros(truth_rates[area].shape[2], dtype=bool)
+        mask[heldout_neurons.get(area, [])] = True
+
+        r2_heldout = (
+            standard_r2(truth_rates[area][:, :, mask], submission[area][:, :, mask])
+            if mask.any()
+            else "n/a"
+        )
+        r2_heldin = (
+            standard_r2(truth_rates[area][:, :, ~mask], submission[area][:, :, ~mask])
+            if not mask.all()
+            else "n/a"
+        )
+
+        results[area_name] = {
+            "r2-held-out-rates": r2_heldout,
+            "r2-held-in-rates": r2_heldin,
+        }
+
+    return results
+
+
 def effectome_cosine_similarity(submission: ArrayMap, config_dir: Path):
     """ 
     Computes cosine similarity for effectome and inferred-input scores between truth and submission.

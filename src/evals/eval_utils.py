@@ -72,6 +72,35 @@ def get_area_names(submission: ArrayMap) -> list[str]:
     return [k.removeprefix("area-") for k in submission.keys() if k.startswith("area-")]
 
 
+def activity_to_lam(
+    activity: np.ndarray,
+    *,
+    dt: float,
+    rate_max: float,
+) -> np.ndarray:
+    """Map continuous hidden activity to Poisson rate λ (expected counts per bin)."""
+    activity = np.clip(np.asarray(activity, dtype=np.float64), -1.0, 1.0)
+    rates_hz = rate_max * (activity + 1.0) / 2.0
+    lam = rates_hz * dt
+    return np.clip(lam, 0.0, None).astype(np.float32)
+
+
+def continuous_activity_to_rates_map(
+    activity_map: ArrayMap,
+    *,
+    dt: float,
+    rate_max: float,
+) -> ArrayMap:
+    """Convert area-* continuous activity arrays to λ per bin."""
+    out: ArrayMap = {}
+    for key, arr in activity_map.items():
+        if key.startswith("area-"):
+            out[key] = activity_to_lam(arr, dt=dt, rate_max=rate_max)
+        elif key.startswith("meta-"):
+            out[key] = arr
+    return out
+
+
 # Get heldout neurons for each area
 def get_heldout_neurons(submission: ArrayMap) -> dict[str, np.ndarray]:
     heldout_neurons = {}
