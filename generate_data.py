@@ -165,6 +165,27 @@ def main() -> None:
     )
 
     parser.add_argument(
+        "--noise",
+        type=float,
+        default=None,
+        help="Convenience override for model.noise (e.g. MemoryNetwork / MultiTask).",
+    )
+
+    parser.add_argument(
+        "--noise_p",
+        type=float,
+        default=None,
+        help="Convenience override for model.noise_p (PassDecision pass-area noise).",
+    )
+
+    parser.add_argument(
+        "--noise_d",
+        type=float,
+        default=None,
+        help="Convenience override for model.noise_d (PassDecision decision-area noise).",
+    )
+
+    parser.add_argument(
         "-o",
         "--override",
         action="append",
@@ -193,6 +214,12 @@ def main() -> None:
         overrides.append(
             f"model.input_weight_init_var_scale={args.input_weight_init_var_scale}"
         )
+    if args.noise is not None:
+        overrides.append(f"model.noise={args.noise}")
+    if args.noise_p is not None:
+        overrides.append(f"model.noise_p={args.noise_p}")
+    if args.noise_d is not None:
+        overrides.append(f"model.noise_d={args.noise_d}")
     overrides.extend(args.override)
 
     # Build a default run_name that encodes the swept knobs so re-runs
@@ -202,6 +229,12 @@ def main() -> None:
         suffix_parts.append(f"h{args.hidden_size}")
     if args.input_weight_init_var_scale is not None:
         suffix_parts.append(f"ws{args.input_weight_init_var_scale}")
+    if args.noise is not None:
+        suffix_parts.append(f"nz{args.noise}")
+    if args.noise_p is not None:
+        suffix_parts.append(f"nzp{args.noise_p}")
+    if args.noise_d is not None:
+        suffix_parts.append(f"nzd{args.noise_d}")
     suffix = ("_" + "_".join(suffix_parts)) if suffix_parts else ""
 
     runs_root = project_root / "runs"
