@@ -10,6 +10,10 @@ other neurons use ``model.outputs``.
 - **Poisson**: readout stores **log-rate**; exported values are ``exp(log_rate)`` (firing rates), matching MR-LFADS plots.
 
 Use ``--output-dist gaussian`` or ``--output-dist poisson`` to match each area's ``output_dist`` (readout / observation model).
+
+Use ``--experiment-type pass_decision`` for pass-decision runs (areas P/D): exports
+``message-p_to_d`` instead of memory-network message tensors, and uses a fixed P→D
+effectome target at evaluation time (no connectome config).
 """
 
 import argparse
@@ -50,6 +54,7 @@ def _held_out_neuron_indices(model: Any, area_name: str, sess: int = 0) -> np.nd
 
 
 OutputDist = Literal["gaussian", "poisson"]
+ExperimentType = Literal["memory_network", "pass_decision"]
 
 
 def _readout_to_rate_numpy(area: Any, raw: torch.Tensor, output_dist: OutputDist) -> np.ndarray:
@@ -102,38 +107,46 @@ def _merged_area_predictive_means(
     return merged
 
 
-def _extract_messages_from_model(model: Any) -> tuple[np.ndarray, np.ndarray]:
+def _region_factors_from_model(model: Any) -> np.ndarray:
+    latent_slices: list[np.ndarray] = []
+    for area_name in model.area_names:
+        ahps = model.areas[area_name].hparams
+        states = model.save_var[area_name].states.detach().cpu().numpy()
+        latent_slices.append(states[:, 1:, -int(ahps.fac_dim) :])
+    return np.concatenate(latent_slices, axis=-1).astype(np.float32)
+
+
+def _extract_messages_memory_network(model: Any) -> np.ndarray:
     """
-    Extract message predictions from MR-LFADS internals, matching the notebook convention
-    in `visualizations/mrlfads_export_submission_artifact.ipynb`:
+    Extract memory-network message predictions from MR-LFADS internals.
 
-    - ``message-mesgs``: concatenation across areas of communication posterior means
-      from ``save_var[area].com_params[:, :, :msg_dim]``, where
-      ``msg_dim = com_dim * num_other_areas``.
-    - ``region-factors``: concatenation across areas of the *factor* slice of
-      ``save_var[area].states``, i.e. ``states[:, 1:, -fac_dim:]``.
-      The ``1:`` offset drops the initial-condition slot so time length matches
-      ``seq_len - ic_enc_seq_len``.
-
-    Note:
-        This typically produces a higher-dimensional `message-mesgs` than the
-        generator ground-truth messages. Evaluation should decode/projection-match.
+    ``message-mesgs``: concatenation across areas of communication posterior means
+    from ``save_var[area].com_params[:, :, :msg_dim]``.
     """
     comm_slices: list[np.ndarray] = []
-    latent_slices: list[np.ndarray] = []
-
     for area_name in model.area_names:
         ahps = model.areas[area_name].hparams
         msg_dim = int(ahps.com_dim) * int(model.hparams.num_other_areas)
         com_params = model.save_var[area_name].com_params.detach().cpu().numpy()
         comm_slices.append(com_params[:, :, :msg_dim])
+    return np.concatenate(comm_slices, axis=-1).astype(np.float32)
 
-        states = model.save_var[area_name].states.detach().cpu().numpy()
-        latent_slices.append(states[:, 1:, -int(ahps.fac_dim) :])
 
-    message_mesgs = np.concatenate(comm_slices, axis=-1).astype(np.float32)
-    region_factors = np.concatenate(latent_slices, axis=-1).astype(np.float32)
-    return message_mesgs, region_factors
+def _extract_message_p_to_d(model: Any) -> np.ndarray:
+    """
+    Pass-decision export: predicted pass→decision channel from decision-area com_params.
+    """
+    decision_area = next((n for n in model.area_names if str(n).lower().startswith("d")), None)
+    if decision_area is None:
+        raise ValueError(
+            "pass_decision export requires a decision area (name starting with 'D'); "
+            f"got areas={list(model.area_names)}"
+        )
+
+    ahps = model.areas[decision_area].hparams
+    msg_dim = int(ahps.com_dim) * int(model.hparams.num_other_areas)
+    com_params = model.save_var[decision_area].com_params.detach().cpu().numpy()
+    return com_params[:, :, :msg_dim].astype(np.float32)
 
 
 def _compute_effectome_from_model(model: Any) -> tuple[np.ndarray, np.ndarray]:
@@ -219,6 +232,7 @@ def write_mrlfads_area_activity_h5(
     datamodule: Any,
     out_path: str | Path,
     output_dist: OutputDist,
+    experiment_type: ExperimentType = "memory_network",
 ) -> Path:
     out_path = Path(out_path)
     if out_path.exists():
@@ -259,30 +273,51 @@ def write_mrlfads_area_activity_h5(
         ds.attrs["type"] = "inferred_input_volume"
         ds.attrs["description"] = "Continuous inferred-input volume matching volume(model, reduction=[-1, -2, -3])."
 
-        # Message predictions from MR-LFADS internals
-        message_mesgs, region_factors = _extract_messages_from_model(model)
-        message_mesgs = reorder_predictions_to_input_trials(message_mesgs, trial_idx)
-        region_factors = reorder_predictions_to_input_trials(region_factors, trial_idx)
-        message_latents = region_factors
-
-        ds = g.create_dataset("message-mesgs", data=message_mesgs)
-        ds.attrs["type"] = "prediction"
-        ds.attrs["description"] = (
-            "Concatenated communication slices from save_var[area].inputs "
-            "[ci_enc_dim : ci_enc_dim + com_dim * num_other_areas] for each area."
+        region_factors = reorder_predictions_to_input_trials(
+            _region_factors_from_model(model), trial_idx
         )
 
-        ds = g.create_dataset("message-latents", data=message_latents)
-        ds.attrs["type"] = "prediction"
-        ds.attrs["description"] = (
-            "Concatenated factor states from save_var[area].states[:, 1:, -fac_dim:] for each area."
-        )
+        if experiment_type == "memory_network":
+            message_mesgs = reorder_predictions_to_input_trials(
+                _extract_messages_memory_network(model), trial_idx
+            )
 
-        ds = g.create_dataset("region-factors", data=region_factors)
-        ds.attrs["type"] = "prediction"
-        ds.attrs["description"] = (
-            "Concatenated factor states from save_var[area].states[:, 1:, -fac_dim:] for each area."
-        )
+            ds = g.create_dataset("message-mesgs", data=message_mesgs)
+            ds.attrs["type"] = "prediction"
+            ds.attrs["description"] = (
+                "Concatenated communication posterior means from save_var[area].com_params "
+                "for each area."
+            )
+
+            ds = g.create_dataset("message-latents", data=region_factors)
+            ds.attrs["type"] = "prediction"
+            ds.attrs["description"] = (
+                "Concatenated factor states from save_var[area].states[:, 1:, -fac_dim:] for each area."
+            )
+
+            ds = g.create_dataset("region-factors", data=region_factors)
+            ds.attrs["type"] = "prediction"
+            ds.attrs["description"] = (
+                "Concatenated factor states from save_var[area].states[:, 1:, -fac_dim:] for each area."
+            )
+        elif experiment_type == "pass_decision":
+            message_p_to_d = reorder_predictions_to_input_trials(
+                _extract_message_p_to_d(model), trial_idx
+            )
+
+            ds = g.create_dataset("message-p_to_d", data=message_p_to_d)
+            ds.attrs["type"] = "prediction"
+            ds.attrs["description"] = (
+                "Predicted pass-to-decision communication channel from decision-area com_params."
+            )
+
+            ds = g.create_dataset("region-factors", data=region_factors)
+            ds.attrs["type"] = "prediction"
+            ds.attrs["description"] = (
+                "Concatenated factor states from save_var[area].states[:, 1:, -fac_dim:] for each area."
+            )
+        else:
+            raise ValueError(f"unsupported experiment_type: {experiment_type}")
 
 
 
@@ -321,6 +356,16 @@ def main() -> None:
         choices=("gaussian", "poisson"),
         help="Must match area output_dist: poisson → exp(log-rate); gaussian → compute_means.",
     )
+    parser.add_argument(
+        "--experiment-type",
+        type=str,
+        default="memory_network",
+        choices=("memory_network", "pass_decision"),
+        help=(
+            "memory_network: export message-mesgs/message-latents; "
+            "pass_decision: export message-p_to_d (fixed P→D effectome at eval)."
+        ),
+    )
     args = parser.parse_args()
 
     # file lives at the repo root
@@ -350,9 +395,6 @@ def main() -> None:
         config_path=str(config_path),
         train=False,
         checkpoint_dir=str(run_dir),
-        overrides={
-            "+datamodule.filepath_override": str(input_h5),
-        },
     )
 
     datamodule.hparams.p_split = [0.0, 1.0]
@@ -371,6 +413,7 @@ def main() -> None:
         datamodule=datamodule,
         out_path=output_h5,
         output_dist=args.output_dist,
+        experiment_type=args.experiment_type,
     )
     print(f"Wrote {output_h5}")
 

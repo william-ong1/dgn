@@ -50,6 +50,7 @@ def _run_forward(
     output_h5: Path,
     output_dist: str,
     accelerator: str,
+    experiment_type: str,
 ) -> None:
     cmd = [
         sys.executable,
@@ -62,6 +63,8 @@ def _run_forward(
         str(output_h5),
         "--output-dist",
         output_dist,
+        "--experiment-type",
+        experiment_type,
         "--accelerator",
         accelerator,
     ]
@@ -261,6 +264,7 @@ def main() -> None:
                     output_h5=output_h5,
                     output_dist=args.output_dist,
                     accelerator=args.accelerator,
+                    experiment_type=args.experiment_type,
                 )
 
         if args.forward_only:
