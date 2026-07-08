@@ -276,7 +276,13 @@ def message_latent_reconstruction(truth: ArrayMap, submission: ArrayMap) -> dict
     return {"message-latents-r2": decode_r2_from_features(y, y_hat)}
 
 
-def lag_recovery_memory_network(truth: ArrayMap, submission: ArrayMap, max_lag: int = 5) -> dict[str, float]:
+def lag_recovery_memory_network(
+    truth: ArrayMap,
+    submission: ArrayMap,
+    max_lag: int = 5,
+    *,
+    true_lag: int | None = None,
+) -> dict[str, float]:
     """
     Lag scan using model-vs-truth message trajectories directly.
 
@@ -285,11 +291,16 @@ def lag_recovery_memory_network(truth: ArrayMap, submission: ArrayMap, max_lag: 
 
     Returns:
       - lag-pred: best lag (signed)
-      - lag-error: abs(best lag), kept for backward compatibility
+      - lag-r2-best: best decode-R² achieved during lag scan
+      - lag-r2: decode-R² at ``true_lag`` (when provided), for cross-run comparison
     """
 
+    nan_result = {"lag-pred": float("nan"), "lag-r2-best": float("nan")}
+    if true_lag is not None:
+        nan_result["lag-r2"] = float("nan")
+
     if "message-mesgs" not in submission:
-        return {"lag-pred": float("nan")}
+        return nan_result
 
     X = np.asarray(submission["message-mesgs"], dtype=np.float64)
     Y = np.asarray(truth["message-mesgs"], dtype=np.float64)
@@ -297,22 +308,29 @@ def lag_recovery_memory_network(truth: ArrayMap, submission: ArrayMap, max_lag: 
     best_lag = 0
     best_r2 = -np.inf
 
-    # Scan lags from 0 to max_lag.
     for lag in range(-max_lag, max_lag + 1):
         x_aligned, y_aligned = _align_source_delay(X, Y, lag)
         if x_aligned is None:
             continue
 
-        # Model/truth message feature widths may differ; decode handles this.
         score = decode_r2_from_features(y_aligned, x_aligned)
         if np.isfinite(score) and score > best_r2:
             best_r2 = score
             best_lag = lag
 
     if not np.isfinite(best_r2):
-        return {"lag-pred": float("nan")}
-        
-    return {"lag-pred": float(best_lag)}
+        return nan_result
+
+    results = {"lag-pred": float(best_lag), "lag-r2-best": float(best_r2)}
+
+    if true_lag is not None:
+        x_aligned, y_aligned = _align_source_delay(X, Y, int(true_lag))
+        if x_aligned is None:
+            results["lag-r2"] = float("nan")
+        else:
+            results["lag-r2"] = float(decode_r2_from_features(y_aligned, x_aligned))
+
+    return results
 
 
 def decode_r2_from_features(y: np.ndarray, y_hat: np.ndarray) -> float:

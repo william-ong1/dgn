@@ -111,12 +111,16 @@ def _run_eval(
 
 
 def _global_row(run_name: str, results: dict) -> dict:
-    _, global_df, _ = split_results_for_display(results)
+    _, global_df, temporal_df = split_results_for_display(results)
     row = {"run": run_name}
     if global_df.empty:
-        return row
-    for col in global_df.columns:
-        row[col] = global_df.iloc[0][col]
+        pass
+    else:
+        for col in global_df.columns:
+            row[col] = global_df.iloc[0][col]
+    if not temporal_df.empty:
+        for col in temporal_df.columns:
+            row[f"temporal-{col}"] = temporal_df.iloc[0][col]
     return row
 
 
@@ -286,6 +290,9 @@ def main() -> None:
             r = region_df.copy()
             r.insert(0, "run", run_name)
             region_rows.append(r)
+
+        output_h5.unlink()
+        print(f"deleted forward output: {output_h5}")
 
     if args.forward_only:
         return

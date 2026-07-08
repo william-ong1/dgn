@@ -319,9 +319,9 @@ def evaluate_memory_network_submission(
     results["aggregates"] = aggregates
 
     # Evaluate temporal lag recovery
-    temporal_results = lag_recovery_memory_network(truth, submission)
-    true_lag = float(load_memory_network_lag(config_dir))
-    temporal_results["lag-true"] = true_lag
+    true_lag = int(load_memory_network_lag(config_dir))
+    temporal_results = lag_recovery_memory_network(truth, submission, true_lag=true_lag)
+    temporal_results["lag-true"] = float(true_lag)
     pred_lag = temporal_results.get("lag-pred", float("nan"))
     temporal_results["lag-error"] = abs(pred_lag - true_lag)
     results["temporal"] = temporal_results
