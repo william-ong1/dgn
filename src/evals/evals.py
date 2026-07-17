@@ -8,6 +8,7 @@ from typing import Any
 from .eval_utils import (
     ArrayMap,
     continuous_activity_to_rates_map,
+    get_area_names,
     infer_submission_pred_time_len,
     load_memory_network_lag,
     load_session_arrays,
@@ -350,18 +351,13 @@ def evaluate_pass_decision_submission(
     )
     results["neural-activity"] = neural_activity_reconstruction_results
 
-    # Evaluate message reconstruction
-    # message_recon_results = message_reconstruction(truth, submission)
-    message_p_to_d_recon_results = message_p_to_d_reconstruction(truth, submission)
-    effectome_recovery_results = effectome_cosine_similarity_pass_decision(submission)
-    # message_latent_recon_results = message_latent_reconstruction(truth, submission)
-
-    # Combine message reconstruction results
+    # Cross-area structure metrics (P-only / single-area runs skip these)
     struct = {}
-    struct.update(effectome_recovery_results)
-    struct.update(message_p_to_d_recon_results)
-    # struct.update(message_latent_recon_results)
-    results["structure"] = struct
+    if len(get_area_names(submission)) > 1:
+        struct.update(message_p_to_d_reconstruction(truth, submission))
+        struct.update(effectome_cosine_similarity_pass_decision(submission))
+    if struct:
+        results["structure"] = struct
 
     # Evaluate truth input decoding
     truth_inp_decode_results = truth_input_decoding_pass_decision(truth, submission, config_dir)

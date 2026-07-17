@@ -220,11 +220,10 @@ def truth_input_decoding_pass_decision(
     """
     Area-specific decodability for pass-decision:
       - P area activity decodes ``truth-inp``
-      - D area activity decodes ``message-p_to_d``
+      - D area activity decodes ``message-p_to_d`` (multi-area runs only)
     """
     area_names = get_area_names(submission)
 
-    print(truth["message-d"])
     results: dict[str, float] = {}
     for name in area_names:
         key = f"area-{name}"
@@ -236,6 +235,11 @@ def truth_input_decoding_pass_decision(
             target_key = "truth-inp"
         elif lname.startswith("d"):
             target_key = "message-p_to_d"
+        else:
+            continue
+
+        if target_key not in truth:
+            continue
 
         target = np.asarray(truth[target_key], dtype=np.float64)
         x = np.asarray(submission[key], dtype=np.float64)

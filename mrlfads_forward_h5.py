@@ -14,6 +14,9 @@ Use ``--output-dist gaussian`` or ``--output-dist poisson`` to match each area's
 Use ``--experiment-type pass_decision`` for pass-decision runs (areas P/D): exports
 ``message-p_to_d`` instead of memory-network message tensors, and uses a fixed P→D
 effectome target at evaluation time (no connectome config).
+
+Single-area runs (``num_other_areas=0``) export only neural activity, held-out indices,
+and optional ``region-factors`` — no effectome or message tensors.
 """
 
 import argparse
@@ -149,6 +152,11 @@ def _extract_message_p_to_d(model: Any) -> np.ndarray:
     return com_params[:, :, :msg_dim].astype(np.float32)
 
 
+def _has_cross_area_communication(model: Any) -> bool:
+    """True when the model has inter-area communication channels (num_other_areas > 0)."""
+    return int(getattr(model.hparams, "num_other_areas", 0)) > 0
+
+
 def _compute_effectome_from_model(model: Any) -> tuple[np.ndarray, np.ndarray]:
     """
     Match the provided `volume(model, reduction=[-1, -2, -3])` logic.
@@ -263,37 +271,46 @@ def write_mrlfads_area_activity_h5(
             ds.attrs["description"] = "Subset of neuron indices held out during MR-LFADS training (hn_indices)."
 
 
-        comm_scores, inferred_input_scores = _compute_effectome_from_model(model)
+        has_comm = _has_cross_area_communication(model)
 
-        ds = g.create_dataset("effectome-scores", data=comm_scores.astype(np.float32))
-        ds.attrs["type"] = "communication_volume"
-        ds.attrs["description"] = "Continuous communication volume matching volume(model, reduction=[-1, -2, -3])."
+        if has_comm:
+            comm_scores, inferred_input_scores = _compute_effectome_from_model(model)
 
-        ds = g.create_dataset("inferred-input-scores", data=inferred_input_scores.astype(np.float32))
-        ds.attrs["type"] = "inferred_input_volume"
-        ds.attrs["description"] = "Continuous inferred-input volume matching volume(model, reduction=[-1, -2, -3])."
+            ds = g.create_dataset("effectome-scores", data=comm_scores.astype(np.float32))
+            ds.attrs["type"] = "communication_volume"
+            ds.attrs["description"] = (
+                "Continuous communication volume matching volume(model, reduction=[-1, -2, -3])."
+            )
+
+            ds = g.create_dataset("inferred-input-scores", data=inferred_input_scores.astype(np.float32))
+            ds.attrs["type"] = "inferred_input_volume"
+            ds.attrs["description"] = (
+                "Continuous inferred-input volume matching volume(model, reduction=[-1, -2, -3])."
+            )
 
         region_factors = reorder_predictions_to_input_trials(
             _region_factors_from_model(model), trial_idx
         )
 
         if experiment_type == "memory_network":
-            message_mesgs = reorder_predictions_to_input_trials(
-                _extract_messages_memory_network(model), trial_idx
-            )
+            if has_comm:
+                message_mesgs = reorder_predictions_to_input_trials(
+                    _extract_messages_memory_network(model), trial_idx
+                )
 
-            ds = g.create_dataset("message-mesgs", data=message_mesgs)
-            ds.attrs["type"] = "prediction"
-            ds.attrs["description"] = (
-                "Concatenated communication posterior means from save_var[area].com_params "
-                "for each area."
-            )
+                ds = g.create_dataset("message-mesgs", data=message_mesgs)
+                ds.attrs["type"] = "prediction"
+                ds.attrs["description"] = (
+                    "Concatenated communication posterior means from save_var[area].com_params "
+                    "for each area."
+                )
 
-            ds = g.create_dataset("message-latents", data=region_factors)
-            ds.attrs["type"] = "prediction"
-            ds.attrs["description"] = (
-                "Concatenated factor states from save_var[area].states[:, 1:, -fac_dim:] for each area."
-            )
+                ds = g.create_dataset("message-latents", data=region_factors)
+                ds.attrs["type"] = "prediction"
+                ds.attrs["description"] = (
+                    "Concatenated factor states from save_var[area].states[:, 1:, -fac_dim:] "
+                    "for each area."
+                )
 
             ds = g.create_dataset("region-factors", data=region_factors)
             ds.attrs["type"] = "prediction"
@@ -301,15 +318,16 @@ def write_mrlfads_area_activity_h5(
                 "Concatenated factor states from save_var[area].states[:, 1:, -fac_dim:] for each area."
             )
         elif experiment_type == "pass_decision":
-            message_p_to_d = reorder_predictions_to_input_trials(
-                _extract_message_p_to_d(model), trial_idx
-            )
+            if has_comm:
+                message_p_to_d = reorder_predictions_to_input_trials(
+                    _extract_message_p_to_d(model), trial_idx
+                )
 
-            ds = g.create_dataset("message-p_to_d", data=message_p_to_d)
-            ds.attrs["type"] = "prediction"
-            ds.attrs["description"] = (
-                "Predicted pass-to-decision communication channel from decision-area com_params."
-            )
+                ds = g.create_dataset("message-p_to_d", data=message_p_to_d)
+                ds.attrs["type"] = "prediction"
+                ds.attrs["description"] = (
+                    "Predicted pass-to-decision communication channel from decision-area com_params."
+                )
 
             ds = g.create_dataset("region-factors", data=region_factors)
             ds.attrs["type"] = "prediction"
