@@ -147,7 +147,12 @@ def split_results_for_display(results: dict) -> tuple[pd.DataFrame, pd.DataFrame
     truth_decode = results.get("truth-inp-decode", {})
     if isinstance(truth_decode, dict):
         for region, value in truth_decode.items():
-            region_rows.setdefault(region, {})["truth-inp-decode-r2"] = value
+            if isinstance(value, dict):
+                for tname, score in value.items():
+                    col = "truth-inp-decode-r2" if tname == "truth-inp" else f"{tname}-decode-r2"
+                    region_rows.setdefault(region, {})[col] = score
+            else:
+                region_rows.setdefault(region, {})["truth-inp-decode-r2"] = value
 
     structure = results.get("structure", {})
     if isinstance(structure, dict):

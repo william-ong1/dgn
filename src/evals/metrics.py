@@ -212,19 +212,55 @@ def truth_input_decoding_memory_network(
     return results
 
 
+def _pass_decision_targets_from_truth_inp(truth: ArrayMap) -> dict[str, np.ndarray]:
+    """Build decode targets from ``truth-inp``: raw input, cumsum, and sign(cumsum)."""
+    if "truth-inp" not in truth:
+        return {}
+    inp = np.asarray(truth["truth-inp"], dtype=np.float64)
+    cumsum = np.cumsum(inp, axis=1)
+    return {
+        "truth-inp": inp,
+        "cumsum": cumsum,
+        "sign_cumsum": np.sign(cumsum),
+    }
+
+
 def truth_input_decoding_pass_decision(
     truth: ArrayMap,
     submission: ArrayMap,
     config_dir: Path | None = None,
-) -> dict[str, float]:
+) -> dict[str, float | dict[str, float]]:
     """
-    Area-specific decodability for pass-decision:
+    Area-specific decodability for pass-decision.
+
+    Multi-area (P+D):
       - P area activity decodes ``truth-inp``
-      - D area activity decodes ``message-p_to_d`` (multi-area runs only)
+      - D area activity decodes ``message-p_to_d``
+
+    Single-area (P-only or D-only):
+      - Decode ``truth-inp``, ``cumsum``, and ``sign_cumsum`` from that area
+        (D's primary task signal is ``sign_cumsum`` / ``cumsum``).
     """
     area_names = get_area_names(submission)
+    single_area = len(area_names) == 1
 
-    results: dict[str, float] = {}
+    results: dict[str, float | dict[str, float]] = {}
+    if single_area:
+        targets = _pass_decision_targets_from_truth_inp(truth)
+        if not targets:
+            return results
+
+        for name in area_names:
+            key = f"area-{name}"
+            if key not in submission:
+                continue
+            x = np.asarray(submission[key], dtype=np.float64)
+            area_scores: dict[str, float] = {}
+            for tname, target in targets.items():
+                area_scores[tname] = float(decode_r2_from_features(target, x))
+            results[name] = area_scores
+        return results
+
     for name in area_names:
         key = f"area-{name}"
         if key not in submission:

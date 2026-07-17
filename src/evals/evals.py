@@ -105,12 +105,27 @@ def _prepare_rates_truth(
     )
 
 
-def _collect_truth_decode_mean(truth_decode: dict[str, float]) -> dict[str, float]:
-    vals: list[float] = []
+def _collect_truth_decode_mean(truth_decode: dict) -> dict[str, float]:
+    """Aggregate decode R²; supports scalar-per-area or nested {area: {target: r2}}."""
+    by_target: dict[str, list[float]] = {}
+    flat_vals: list[float] = []
+
     for value in truth_decode.values():
-        if isinstance(value, (int, float, np.floating)):
-            vals.append(float(value))
-    return {"truth-inp-decode-r2-mean": _safe_mean(vals)}
+        if isinstance(value, dict):
+            for tname, score in value.items():
+                if isinstance(score, (int, float, np.floating)):
+                    by_target.setdefault(str(tname), []).append(float(score))
+        elif isinstance(value, (int, float, np.floating)):
+            flat_vals.append(float(value))
+
+    out: dict[str, float] = {}
+    if by_target:
+        for tname, vals in by_target.items():
+            key = "truth-inp-decode-r2-mean" if tname == "truth-inp" else f"{tname}-decode-r2-mean"
+            out[key] = _safe_mean(vals)
+    elif flat_vals:
+        out["truth-inp-decode-r2-mean"] = _safe_mean(flat_vals)
+    return out
 
 
 def evaluate_submission(
