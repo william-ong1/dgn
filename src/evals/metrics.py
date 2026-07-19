@@ -394,11 +394,14 @@ def standard_r2(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     Standard coefficient of determination R² on flattened arrays.
 
     Returns nan if y_true is (near-)constant, matching the usual undefined R² case.
+    Also returns nan if either array contains non-finite values (e.g. diverged preds).
     """
     y_t = np.asarray(y_true, dtype=np.float64).reshape(-1)
     y_p = np.asarray(y_pred, dtype=np.float64).reshape(-1)
     if y_t.size != y_p.size:
         raise ValueError(f"Shape mismatch after flatten: {y_t.size} vs {y_p.size}")
+    if not (np.isfinite(y_t).all() and np.isfinite(y_p).all()):
+        return float("nan")
     if np.var(y_t) < 1e-12:
         return float("nan")
     return float(r2_score(y_t, y_p))

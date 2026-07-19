@@ -275,18 +275,23 @@ def main() -> None:
             continue
 
         print(f">> evaluate {run_name}")
-        results = _run_eval(
-            submission_h5=output_h5,
-            truth_h5=truth_h5,
-            config_dir=config_dir,
-            experiment_type=args.experiment_type,
-            output_dist=args.output_dist,
-            truth_time_start=args.truth_time_start,
-            output_csv=eval_csv,
-            rates_truth_h5=args.rates_truth_h5,
-            poisson_dt=args.poisson_dt,
-            poisson_rate_max=args.poisson_rate_max,
-        )
+        try:
+            results = _run_eval(
+                submission_h5=output_h5,
+                truth_h5=truth_h5,
+                config_dir=config_dir,
+                experiment_type=args.experiment_type,
+                output_dist=args.output_dist,
+                truth_time_start=args.truth_time_start,
+                output_csv=eval_csv,
+                rates_truth_h5=args.rates_truth_h5,
+                poisson_dt=args.poisson_dt,
+                poisson_rate_max=args.poisson_rate_max,
+            )
+        except Exception as e:
+            print(f"skip eval {run_name}: {type(e).__name__}: {e}")
+            continue
+
         summary_rows.append(_global_row(run_name, results))
 
         region_df, _, _ = split_results_for_display(results)
