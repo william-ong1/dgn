@@ -233,54 +233,38 @@ def truth_input_decoding_pass_decision(
     """
     Area-specific decodability for pass-decision.
 
-    Multi-area (P+D):
-      - P area activity decodes ``truth-inp``
-      - D area activity decodes ``message-p_to_d``
+    For every area (P-only, D-only, or P+D), decode ``truth-inp``, ``cumsum``,
+    and ``sign_cumsum`` from that area's activity.
 
-    Single-area (P-only or D-only):
-      - Decode ``truth-inp``, ``cumsum``, and ``sign_cumsum`` from that area
-        (D's primary task signal is ``sign_cumsum`` / ``cumsum``).
+    When ``message-p_to_d`` is present in truth (typical multi-area runs), also
+    report how well D activity decodes that message channel.
     """
     area_names = get_area_names(submission)
-    single_area = len(area_names) == 1
-
+    targets = _pass_decision_targets_from_truth_inp(truth)
     results: dict[str, float | dict[str, float]] = {}
-    if single_area:
-        targets = _pass_decision_targets_from_truth_inp(truth)
-        if not targets:
-            return results
-
-        for name in area_names:
-            key = f"area-{name}"
-            if key not in submission:
-                continue
-            x = np.asarray(submission[key], dtype=np.float64)
-            area_scores: dict[str, float] = {}
-            for tname, target in targets.items():
-                area_scores[tname] = float(decode_r2_from_features(target, x))
-            results[name] = area_scores
+    if not targets:
         return results
+
+    msg_target = (
+        np.asarray(truth["message-p_to_d"], dtype=np.float64)
+        if "message-p_to_d" in truth
+        else None
+    )
 
     for name in area_names:
         key = f"area-{name}"
         if key not in submission:
             continue
-
-        lname = name.lower()
-        if lname.startswith("p"):
-            target_key = "truth-inp"
-        elif lname.startswith("d"):
-            target_key = "message-p_to_d"
-        else:
-            continue
-
-        if target_key not in truth:
-            continue
-
-        target = np.asarray(truth[target_key], dtype=np.float64)
         x = np.asarray(submission[key], dtype=np.float64)
-        score = decode_r2_from_features(target, x)
-        results[name] = float(score)
+        area_scores: dict[str, float] = {
+            tname: float(decode_r2_from_features(target, x))
+            for tname, target in targets.items()
+        }
+        if msg_target is not None and str(name).lower().startswith("d"):
+            area_scores["message-p_to_d"] = float(
+                decode_r2_from_features(msg_target, x)
+            )
+        results[name] = area_scores
 
     return results
 
