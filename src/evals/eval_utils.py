@@ -79,10 +79,13 @@ def activity_to_lam(
     rate_max: float,
 ) -> np.ndarray:
     """Map continuous hidden activity to Poisson rate λ (expected counts per bin)."""
-    activity = np.clip(np.asarray(activity, dtype=np.float64), -1.0, 1.0)
-    rates_hz = rate_max * (activity + 1.0) / 2.0
-    lam = rates_hz * dt
-    return np.clip(lam, 0.0, None).astype(np.float32)
+    x = np.asarray(activity, dtype=np.float64)
+    sd = float(np.std(x))
+    if sd >= 1e-12:
+        x = (x - float(np.mean(x))) / sd
+    rates = rate_max * (x + 1.0) / 2.0
+    lam = np.clip(rates * dt, a_min=0.0, a_max=rate_max)
+    return lam.astype(np.float32)
 
 
 def continuous_activity_to_rates_map(
