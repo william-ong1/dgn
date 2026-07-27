@@ -183,3 +183,47 @@ def split_results_for_display(results: dict) -> tuple[pd.DataFrame, pd.DataFrame
     global_df = pd.DataFrame([global_metrics]) if global_metrics else pd.DataFrame()
     temporal_df = pd.DataFrame([temporal_metrics]) if temporal_metrics else pd.DataFrame()
     return region_df, global_df, temporal_df
+
+
+def _strip_aggregate_mean_suffix(name: str) -> str:
+    """Map aggregate keys like ``r2-held-out-mean`` -> ``r2-held-out`` for row alignment."""
+    return name[: -len("-mean")] if name.endswith("-mean") else name
+
+
+def results_to_summary_rows(run_name: str, results: dict) -> list[dict]:
+    """
+    Flatten eval results into summary rows.
+
+    - One row per area/region (``region=P``, ``region=D``, ...)
+    - When there are 2+ areas, also one ``region=combined`` row with aggregate
+      means plus structure metrics (message/effectome).
+    - Single-area runs: just the one region row (no redundant combined).
+    """
+    region_df, global_df, temporal_df = split_results_for_display(results)
+    rows: list[dict] = []
+
+    if not region_df.empty:
+        for _, r in region_df.iterrows():
+            row: dict = {"run": run_name, "region": r["region"]}
+            for col in region_df.columns:
+                if col == "region":
+                    continue
+                row[col] = r[col]
+            rows.append(row)
+
+    n_regions = len(rows)
+    if n_regions > 1 or (n_regions == 0 and not global_df.empty):
+        crow: dict = {"run": run_name, "region": "combined"}
+        if not global_df.empty:
+            for col in global_df.columns:
+                crow[_strip_aggregate_mean_suffix(col)] = global_df.iloc[0][col]
+        if not temporal_df.empty:
+            for col in temporal_df.columns:
+                crow[f"temporal-{col}"] = temporal_df.iloc[0][col]
+        rows.append(crow)
+    elif n_regions == 1 and not temporal_df.empty:
+        # Attach temporal metrics onto the single-area row when present
+        for col in temporal_df.columns:
+            rows[0][f"temporal-{col}"] = temporal_df.iloc[0][col]
+
+    return rows

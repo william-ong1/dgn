@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.evals.evals import evaluate_submission
-from src.evals.eval_utils import split_results_for_display
+from src.evals.eval_utils import results_to_summary_rows, split_results_for_display
 
 
 # Main function to run the evaluation script
@@ -136,6 +136,13 @@ def main() -> None:
     out_csv = args.output_csv.expanduser().resolve()
     dataframe.to_csv(out_csv, index=False)
 
+    # Flat summary with per-region + combined (same schema as batch_mrlfads_eval)
+    summary_rows = results_to_summary_rows(submission_h5.stem, results)
+    if summary_rows:
+        summary_path = out_csv.with_name(out_csv.stem + "_summary.csv")
+        pd.DataFrame(summary_rows).to_csv(summary_path, index=False)
+        print(f"Wrote flat summary (per-region + combined): {summary_path}")
+
     with pd.option_context("display.max_rows", None, "display.max_columns", None, "display.width", 120):
         print("Region-specific metrics:")
         if region_df.empty:
@@ -147,11 +154,14 @@ def main() -> None:
             print("(none)")
         else:
             print(temporal_df.to_string(index=False))
-        print("\nGlobal metrics:")
+        print("\nGlobal / combined metrics:")
         if global_df.empty:
             print("(none)")
         else:
             print(global_df.to_string(index=False))
+        if summary_rows:
+            print("\nFlat summary rows:")
+            print(pd.DataFrame(summary_rows).to_string(index=False))
     print(f"Wrote to {out_csv}")
 
 def _attach_ci_columns(

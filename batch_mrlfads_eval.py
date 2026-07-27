@@ -6,7 +6,9 @@ For each run:
   1. mrlfads_forward_h5.py  -> model_outputs/<run_name>_outputs.h5
   2. run_evaluation.py      -> model_outputs/<run_name>_eval.csv
 
-Then writes a combined summary CSV (one row per run, global metrics).
+Then writes a combined summary CSV with:
+  - one row per run × region (e.g. P, D)
+  - plus a ``region=combined`` row when multiple areas are present
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.evals.evals import evaluate_submission
-from src.evals.eval_utils import split_results_for_display
+from src.evals.eval_utils import results_to_summary_rows, split_results_for_display
 
 
 def _discover_runs(runs_dir: Path, run_glob: str | None = None) -> list[Path]:
@@ -114,17 +116,10 @@ def _run_eval(
 
 
 def _global_row(run_name: str, results: dict) -> dict:
-    _, global_df, temporal_df = split_results_for_display(results)
-    row = {"run": run_name}
-    if global_df.empty:
-        pass
-    else:
-        for col in global_df.columns:
-            row[col] = global_df.iloc[0][col]
-    if not temporal_df.empty:
-        for col in temporal_df.columns:
-            row[f"temporal-{col}"] = temporal_df.iloc[0][col]
-    return row
+    """Deprecated helper kept for callers; prefer ``results_to_summary_rows``."""
+    rows = results_to_summary_rows(run_name, results)
+    combined = next((r for r in rows if r.get("region") == "combined"), None)
+    return combined if combined is not None else (rows[0] if rows else {"run": run_name})
 
 
 def main() -> None:
@@ -204,7 +199,10 @@ def main() -> None:
         "--summary-csv",
         type=Path,
         default=Path("model_outputs/evaluation_summary_all_runs.csv"),
-        help="Combined CSV with one row per run (global metrics).",
+        help=(
+            "Combined CSV: one row per run×region, plus region=combined when "
+            "multiple areas are present."
+        ),
     )
     parser.add_argument(
         "--rates-truth-h5",
@@ -292,7 +290,7 @@ def main() -> None:
             print(f"skip eval {run_name}: {type(e).__name__}: {e}")
             continue
 
-        summary_rows.append(_global_row(run_name, results))
+        summary_rows.extend(results_to_summary_rows(run_name, results))
 
         region_df, _, _ = split_results_for_display(results)
         if not region_df.empty:
