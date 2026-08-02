@@ -33,7 +33,7 @@ for H in "${HIDDEN_SIZES[@]}"; do
     LOG="out/mn_h${H}_ws${WS}.log"
 
     echo "Launching h=${H} ws=${WS} -> ${RUN_DIR}"
-    python "${REPO}/generate_data.py" memory_network \
+    python "${REPO}/scripts/generate_data.py" memory_network \
       --hidden_size "$H" \
       --memory "$WS" \
       --noise 2 \

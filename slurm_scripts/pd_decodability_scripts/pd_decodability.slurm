@@ -26,7 +26,7 @@ export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
 mkdir -p out err
 
-python "${REPO}/pd_compute_decodability.py" "$RUNS_ROOT" \
+python "${REPO}/scripts/pd_compute_decodability.py" "$RUNS_ROOT" \
   --pattern "pass_decision_h256_n0.001_seed0_id2607210153" \
   --output "$RUNS_ROOT/decodability_results.csv"
 

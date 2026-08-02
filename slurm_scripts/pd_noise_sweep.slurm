@@ -33,7 +33,7 @@ for H in "${HIDDEN_SIZES[@]}"; do
     LOG="out/mn_h${H}_n${N}.log"
 
     echo "Launching h=${H} noise=${N} -> ${RUN_DIR}"
-    python "${REPO}/generate_data.py" pass_decision \
+    python "${REPO}/scripts/generate_data.py" pass_decision \
       --hidden_size "$H" \
       --noise_p "$N" \
       --noise_d "$N" \

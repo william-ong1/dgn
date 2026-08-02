@@ -56,7 +56,8 @@ def run_data_generation(
     """
 
     # Register the project root and src directory to the Python path
-    project_root = Path(__file__).resolve().parent
+    # scripts/ -> repo root
+    project_root = Path(__file__).resolve().parent.parent
     src_dir = project_root / "src"
     if src_dir.is_dir() and str(src_dir) not in sys.path:
         sys.path.insert(0, str(src_dir))
@@ -145,7 +146,7 @@ def main() -> None:
         metavar="PATH",
         help=(
             "Path to a Lightning .ckpt file: absolute, or relative to the project root "
-            "(the directory that contains generate_data.py). "
+            "(the repo root, parent of scripts/). "
             "Example: runs/<run_name>/lightning_checkpoints/best.ckpt"
         ),
     )
@@ -198,7 +199,7 @@ def main() -> None:
     )
 
     args = parser.parse_args()
-    project_root = Path(__file__).resolve().parent
+    project_root = Path(__file__).resolve().parent.parent
 
     config_path = project_root / "configs" / args.experiment_name / "main.yaml"
 

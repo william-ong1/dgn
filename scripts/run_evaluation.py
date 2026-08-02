@@ -1,9 +1,15 @@
 """Run evaluation on a submission HDF5 file against the ground truth HDF5 file."""
 
 import argparse
+import sys
 from pathlib import Path
 
 import pandas as pd
+
+# scripts/ -> repo root (needed for ``from src.evals...``)
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from src.evals.evals import evaluate_submission
 from src.evals.eval_utils import results_to_summary_rows, split_results_for_display

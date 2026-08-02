@@ -19,19 +19,19 @@ conda activate /gscratch/golub/wong2/mr-lfads
 
 REPO=/mmfs1/home/wong2/repos/dgn
 
-python "${REPO}/generate_data.py" memory_network \
+python "${REPO}/scripts/generate_data.py" memory_network \
 	--hidden_size 1024 \
       --input_weight_init_var_scale 1.0 \
     --run_name /gscratch/golub/wong2/runs/memory_network_h1024_ws1.0_id2606221443 \
     --ckpt_path /gscratch/golub/wong2/runs/memory_network_h1024_ws1.0_id2606221443/lightning_checkpoints/last.ckpt &
 
-python "${REPO}/generate_data.py" memory_network \
+python "${REPO}/scripts/generate_data.py" memory_network \
 	--hidden_size 1024 \
       --input_weight_init_var_scale 1.5 \
     --run_name /gscratch/golub/wong2/runs/memory_network_h1024_ws1.5_id2606221443 \
     --ckpt_path /gscratch/golub/wong2/runs/memory_network_h1024_ws1.5_id2606221443/lightning_checkpoints/last.ckpt &
 
-python "${REPO}/generate_data.py" memory_network \
+python "${REPO}/scripts/generate_data.py" memory_network \
 	--hidden_size 1024 \
       --input_weight_init_var_scale 2.25 \
     --run_name /gscratch/golub/wong2/runs/memory_network_h1024_ws2.25_id2606221443 \

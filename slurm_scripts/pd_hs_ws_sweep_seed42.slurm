@@ -35,7 +35,7 @@ for H in "${HIDDEN_SIZES[@]}"; do
 	    		LOG="out/mn_h${H}_ws${WS}_seed${SEED}.log"
 
 			echo "Launching h=${H} ws=${WS} seed=${SEED} -> ${RUN_DIR}"
-			python "${REPO}/generate_data.py" pass_decision \
+			python "${REPO}/scripts/generate_data.py" pass_decision \
 		      		--hidden_size "$H" \
 				--input_weight_init_var_scale "$WS" \
 				--run_name "$RUN_DIR" \

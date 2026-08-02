@@ -20,6 +20,11 @@ from pathlib import Path
 
 import pandas as pd
 
+# scripts/ -> repo root (needed for ``from src.evals...``)
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from src.evals.evals import evaluate_submission
 from src.evals.eval_utils import results_to_summary_rows, split_results_for_display
 
@@ -56,7 +61,7 @@ def _run_forward(
 ) -> None:
     cmd = [
         sys.executable,
-        str(repo_root / "mrlfads_forward_h5.py"),
+        str(repo_root / "scripts" / "mrlfads_forward_h5.py"),
         "--run-dir",
         str(run_dir),
         "--input-h5",
@@ -224,7 +229,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    repo_root = Path(__file__).resolve().parent
+    repo_root = REPO_ROOT
     runs_dir = args.runs_dir.expanduser().resolve()
     input_h5 = args.input_h5.expanduser().resolve()
     truth_h5 = args.truth_h5.expanduser().resolve()

@@ -16,7 +16,7 @@ conda activate /gscratch/golub/wong2/mr-lfads
 
 export PYTHONPATH="/mmfs1/home/wong2/repos/mrlfads2:${PYTHONPATH}"
 
-python batch_mrlfads_eval.py \
+python scripts/batch_mrlfads_eval.py \
 	  --runs-dir /gscratch/golub/wong2/mrlfads_runs \
 	    --run-glob 'mn_pois_1*' \
 	      --input-h5 /mmfs1/gscratch/golub/wong2/runs/noise_runs/memory_network_h512_n0.5_id2606221443/data.h5 \

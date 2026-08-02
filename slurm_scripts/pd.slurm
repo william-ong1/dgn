@@ -16,4 +16,4 @@
 source /gscratch/golub/wong2/miniconda3/etc/profile.d/conda.sh
 conda activate /gscratch/golub/wong2/mr-lfads
 
-python /mmfs1/home/wong2/repos/dgn/generate_data.py pass_decision
+python /mmfs1/home/wong2/repos/dgn/scripts/generate_data.py pass_decision

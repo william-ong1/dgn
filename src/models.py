@@ -10,7 +10,8 @@ import utils.visualization_utils as vis
 
 from utils.torch_utils import (
     RNNChannel,
-    MLPBase
+    MLPBase,
+    get_rnn_type,
 )
 
 from utils.common_utils import (
@@ -618,6 +619,7 @@ class MultiTaskNet(DGNBase):
         hidden_size: int = 32,
         lr: float = 4.0e-3,
         input_weight_init_var_scale: float = 1.0,
+        rnn_type: str = 'grucell',
         num_angles: int = 36,
         num_channels: int = 4,
 
@@ -651,6 +653,8 @@ class MultiTaskNet(DGNBase):
             hidden_size: Hidden units per area.
             lr: Learning rate for AdamW.
             input_weight_init_var_scale: Scale factor for the initial variance of the RNN input weights.
+            rnn_type: Recurrent cell type for each area. Either 'grucell'
+                (gated) or 'rnncell' (vanilla tanh RNN).
             num_angles: Bins for direction readout loss.
             num_channels: Size of each inter-area message.
 
@@ -698,9 +702,11 @@ class MultiTaskNet(DGNBase):
         # Build areas, insert function, slice function, loss functions
         self._build_areas()
         if hps.use_global_latent:
-            self.global_latent_cell = nn.GRUCell(
+            self.global_latent_cell = get_rnn_type(
                 hps.num_areas * hps.hidden_size,
                 hps.global_latent_size,
+                hps.rnn_type,
+                "tanh",
             )
         self.insert_func, self.slice_func = self.get_insert_func_nested(hps.total_mesgs)
         self.mseloss = nn.MSELoss(reduction="none")
@@ -1058,6 +1064,7 @@ class MultiTaskNet(DGNBase):
                 [1] + num_down + num_out,
                 None,
                 override_single=True,
+                rnn_type=hps.rnn_type,
             )
             hps.total_mesgs.append(num_down + num_out)
             hps.successor_list[area_name] = (1, flag_out)

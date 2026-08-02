@@ -386,8 +386,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # file lives at the repo root
-    repo_root = Path(__file__).resolve().parent
+    # scripts/ -> repo root
+    repo_root = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(repo_root))
     sys.path.insert(0, str(repo_root / "src"))
     sys.path.insert(0, str(repo_root / "mrlfads2"))
