@@ -233,9 +233,21 @@ def main() -> None:
     runs_dir = args.runs_dir.expanduser().resolve()
     input_h5 = args.input_h5.expanduser().resolve()
     truth_h5 = args.truth_h5.expanduser().resolve()
-    config_dir = args.config_dir.expanduser().resolve()
+    # Relative --config-dir is anchored to the repo root (not the process cwd),
+    # so slurm jobs submitted from slurm_scripts/ still find configs/.
+    config_dir = args.config_dir.expanduser()
+    config_dir = (
+        config_dir.resolve()
+        if config_dir.is_absolute()
+        else (repo_root / config_dir).resolve()
+    )
     output_dir = args.output_dir.expanduser().resolve()
     summary_csv = args.summary_csv.expanduser().resolve()
+    rates_truth_h5 = (
+        args.rates_truth_h5.expanduser().resolve()
+        if args.rates_truth_h5 is not None
+        else None
+    )
 
     if not input_h5.is_file():
         raise SystemExit(f"input H5 not found: {input_h5}")
@@ -287,7 +299,7 @@ def main() -> None:
                 output_dist=args.output_dist,
                 truth_time_start=args.truth_time_start,
                 output_csv=eval_csv,
-                rates_truth_h5=args.rates_truth_h5,
+                rates_truth_h5=rates_truth_h5,
                 poisson_dt=args.poisson_dt,
                 poisson_rate_max=args.poisson_rate_max,
             )
