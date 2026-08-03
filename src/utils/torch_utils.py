@@ -4,6 +4,26 @@ import numpy as np
 from collections import OrderedDict
 
 
+class EMAMetric:
+    """
+    Exponential moving average of a scalar (e.g. validation loss) for logging / LR monitors.
+    """
+    def __init__(self, momentum: float = 0.3):
+        self.momentum = momentum
+        self.value = None
+
+    def update(self, loss, batch_size=None):
+        x = loss.detach().float() if torch.is_tensor(loss) else torch.tensor(float(loss))
+        if self.value is None:
+            self.value = x
+        else:
+            self.value = self.momentum * self.value + (1.0 - self.momentum) * x
+        return self.value
+
+    def compute(self):
+        return self.value
+
+
 class RNNBase(nn.Module):
     """
     Base class for RNNs, where its type ``rnn_type`` and ``nonlinearity`` can be specified. The rest follows nn.RNNCell notations.
