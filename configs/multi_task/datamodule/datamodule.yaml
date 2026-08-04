@@ -10,6 +10,6 @@ p_split:
   - 0.5
 
 task_names:
-  - dly_go_anti
+  - rt_go
 
 resultpath: ${paths.resultpath}
