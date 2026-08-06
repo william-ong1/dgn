@@ -238,6 +238,10 @@ def truth_input_decoding_pass_decision(
 
     When ``message-p_to_d`` is present in truth (typical multi-area runs), also
     report how well D activity decodes that message channel.
+
+    When ``message-p_to_d`` is present in the submission (MR-LFADS forward export),
+    also decode ``cumsum`` from that P→D message itself (expected to be low:
+    the message should carry momentary evidence, not the integrated evidence).
     """
     area_names = get_area_names(submission)
     targets = _pass_decision_targets_from_truth_inp(truth)
@@ -265,6 +269,14 @@ def truth_input_decoding_pass_decision(
                 decode_r2_from_features(msg_target, x)
             )
         results[name] = area_scores
+
+    # Predicted P→D message → cumsum (and sibling targets for context)
+    if "message-p_to_d" in submission:
+        msg = np.asarray(submission["message-p_to_d"], dtype=np.float64)
+        results["message-p_to_d"] = {
+            tname: float(decode_r2_from_features(target, msg))
+            for tname, target in targets.items()
+        }
 
     return results
 

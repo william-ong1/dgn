@@ -8,6 +8,8 @@ For each run:
 
 Then writes a combined summary CSV with:
   - one row per run × region (e.g. P, D)
+  - plus a ``region=message-p_to_d`` row for pass_decision (decode targets,
+    especially cumsum, from the predicted P→D message; expected low for cumsum)
   - plus a ``region=combined`` row when multiple areas are present
 """
 

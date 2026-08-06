@@ -13,7 +13,9 @@ Use ``--output-dist gaussian`` or ``--output-dist poisson`` to match each area's
 
 Use ``--experiment-type pass_decision`` for pass-decision runs (areas P/D): exports
 ``message-p_to_d`` instead of memory-network message tensors, and uses a fixed P→D
-effectome target at evaluation time (no connectome config).
+effectome target at evaluation time (no connectome config). Downstream eval
+(``batch_mrlfads_eval`` / ``truth_input_decoding_pass_decision``) decodes
+``cumsum`` from that predicted P→D message (expected low R²).
 
 Single-area runs (``num_other_areas=0``) export only neural activity, held-out indices,
 and optional ``region-factors`` — no effectome or message tensors.

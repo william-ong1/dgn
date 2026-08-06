@@ -106,11 +106,17 @@ def _prepare_rates_truth(
 
 
 def _collect_truth_decode_mean(truth_decode: dict) -> dict[str, float]:
-    """Aggregate decode R²; supports scalar-per-area or nested {area: {target: r2}}."""
+    """Aggregate decode R²; supports scalar-per-area or nested {area: {target: r2}}.
+
+    Skips ``message-*`` feature rows (e.g. decoding targets from ``message-p_to_d``)
+    so area means stay over neural regions only.
+    """
     by_target: dict[str, list[float]] = {}
     flat_vals: list[float] = []
 
-    for value in truth_decode.values():
+    for region, value in truth_decode.items():
+        if str(region).startswith("message"):
+            continue
         if isinstance(value, dict):
             for tname, score in value.items():
                 if isinstance(score, (int, float, np.floating)):
