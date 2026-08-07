@@ -18,8 +18,7 @@ import re
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-from matplotlib.cm import ScalarMappable
-from matplotlib.colors import LogNorm, Normalize
+from matplotlib.lines import Line2D
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
 
@@ -96,18 +95,11 @@ def load_all_runs(
     return loaded
 
 
-def noise_colormap(noises: list[float]):
-    """Color map over noise; log scale if all values are > 0."""
+def noise_colors(noises: list[float]) -> dict[float, str]:
+    """Map each unique noise level to a distinct matplotlib color."""
     uniq = sorted({float(n) for n in noises if n is not None})
-    if not uniq:
-        return None, None, []
-    if min(uniq) > 0:
-        norm = LogNorm(vmin=min(uniq), vmax=max(uniq))
-    else:
-        # include 0: shift to linear
-        norm = Normalize(vmin=min(uniq), vmax=max(uniq))
-    cmap = plt.get_cmap("viridis")
-    return cmap, norm, uniq
+    cmap = plt.get_cmap("tab10" if len(uniq) <= 10 else "tab20")
+    return {n: cmap(i % cmap.N) for i, n in enumerate(uniq)}
 
 
 def plot_overview(
@@ -116,73 +108,61 @@ def plot_overview(
     output_path: Path,
     dpi: int = 150,
 ) -> None:
-    """Facet by hidden size; left=train, right=valid; color=noise."""
+    """One panel per hidden size; train=solid, valid=dashed; color=noise."""
     with_h = [r for r in runs if r["hidden"] is not None]
-    if not with_h:
-        # fallback: single overlay of everything
-        fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)
-        for ax, kind in zip(axes, ("train", "valid")):
-            for i, r in enumerate(runs):
-                x, y = r[f"{kind}_x"], r[f"{kind}_y"]
-                if not x:
-                    continue
-                ax.plot(x, y, linewidth=1.2, alpha=0.85, label=r["label"])
-            ax.set_title(f"{kind}/{metric}")
-            ax.set_xlabel("step")
-            ax.grid(alpha=0.3)
-        axes[0].set_ylabel(metric)
-        axes[1].legend(fontsize=7, loc="upper right")
-        fig.suptitle(f"All runs — {metric}", fontsize=12)
-        fig.tight_layout()
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(output_path, dpi=dpi)
-        plt.close(fig)
-        print(f"  saved overview: {output_path}")
-        return
+    panels = with_h if with_h else runs
+    hiddens = sorted({r["hidden"] for r in with_h}) if with_h else [None]
+    color_of = noise_colors([r["noise"] for r in panels if r.get("noise") is not None])
 
-    hiddens = sorted({r["hidden"] for r in with_h})
-    noises = [r["noise"] for r in with_h if r["noise"] is not None]
-    cmap, norm, uniq_noise = noise_colormap(noises)
-
-    n_rows = len(hiddens)
+    n = len(hiddens)
+    n_cols = 2 if n > 1 else 1
+    n_rows = (n + n_cols - 1) // n_cols
     fig, axes = plt.subplots(
         n_rows,
-        2,
-        figsize=(12, max(3.2 * n_rows, 4)),
-        sharex=True,
+        n_cols,
+        figsize=(6.5 * n_cols, 4.2 * n_rows),
+        sharex=False,
         squeeze=False,
     )
 
-    for row, h in enumerate(hiddens):
+    for idx, h in enumerate(hiddens):
+        ax = axes[idx // n_cols][idx % n_cols]
         subset = sorted(
-            [r for r in with_h if r["hidden"] == h],
-            key=lambda r: (r["noise"] if r["noise"] is not None else -1, r["seed"] or 0),
+            [r for r in panels if r.get("hidden") == h],
+            key=lambda r: (r["noise"] if r.get("noise") is not None else -1, r.get("seed") or 0),
         )
-        for col, kind in enumerate(("train", "valid")):
-            ax = axes[row][col]
-            for r in subset:
-                x, y = r[f"{kind}_x"], r[f"{kind}_y"]
-                if not x:
-                    continue
-                color = cmap(norm(r["noise"])) if cmap is not None else f"C{subset.index(r) % 10}"
-                ax.plot(x, y, color=color, linewidth=1.3, alpha=0.9)
-            ax.set_title(f"h={h}  {kind}/{metric}" if row == 0 else f"h={h}  {kind}")
-            ax.grid(alpha=0.3)
-            if row == n_rows - 1:
-                ax.set_xlabel("step")
-            if col == 0:
-                ax.set_ylabel(metric)
+        for r in subset:
+            color = color_of.get(r["noise"], "C0")
+            if r["train_x"]:
+                ax.plot(r["train_x"], r["train_y"], color=color, linestyle="-", linewidth=1.4, alpha=0.9)
+            if r["valid_x"]:
+                ax.plot(r["valid_x"], r["valid_y"], color=color, linestyle="--", linewidth=1.4, alpha=0.9)
+        ax.set_title(f"h={h}" if h is not None else "all runs")
+        ax.set_xlabel("step")
+        ax.set_ylabel(metric)
+        ax.grid(alpha=0.3)
 
-    if cmap is not None and uniq_noise:
-        sm = ScalarMappable(norm=norm, cmap=cmap)
-        sm.set_array([])
-        cbar = fig.colorbar(sm, ax=axes, fraction=0.025, pad=0.02)
-        cbar.set_label("noise")
-        # readable ticks at actual noise values
-        cbar.set_ticks(uniq_noise)
-        cbar.set_ticklabels([str(n) for n in uniq_noise])
+    # hide unused axes
+    for idx in range(n, n_rows * n_cols):
+        axes[idx // n_cols][idx % n_cols].set_visible(False)
 
-    fig.suptitle(f"All runs — train vs valid {metric}", fontsize=13, y=1.01)
+    legend_handles = [
+        Line2D([0], [0], color="black", linestyle="-", linewidth=1.6, label="train"),
+        Line2D([0], [0], color="black", linestyle="--", linewidth=1.6, label="valid"),
+    ]
+    for noise, color in color_of.items():
+        legend_handles.append(
+            Line2D([0], [0], color=color, linestyle="-", linewidth=2.0, label=f"n={noise}")
+        )
+
+    fig.legend(
+        handles=legend_handles,
+        loc="center left",
+        bbox_to_anchor=(1.01, 0.5),
+        frameon=True,
+        title="style / noise",
+    )
+    fig.suptitle(f"All runs — train vs valid {metric}", fontsize=13)
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
