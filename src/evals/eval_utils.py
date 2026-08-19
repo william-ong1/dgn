@@ -136,6 +136,143 @@ def load_memory_network_lag(config_dir: Path) -> int:
     return int(cfg["lag"])
 
 
+def resolve_dataset_config_dir(truth_h5: Path | str, fallback: Path | str) -> Path:
+    """
+    Prefer the DGN config saved alongside ``data.h5`` (per-dataset diagram / graph).
+
+    Falls back to the evaluation config directory when the dataset has no bundled
+    ``configs/model/model.yaml`` (e.g. generic ``configs/multi_task/``).
+    """
+    truth_path = Path(truth_h5).expanduser().resolve()
+    bundled = truth_path.parent / "configs"
+    if (bundled / "model" / "model.yaml").is_file():
+        return bundled.resolve()
+    return Path(fallback).expanduser().resolve()
+
+
+def load_multi_task_effectome(config_dir: Path) -> tuple[np.ndarray, list[str]]:
+    """
+    Build a ground-truth effectome matrix from a MultiTaskNet ``diagram``.
+
+    Returns ``effectome[target, source]`` with edge weight ``num_channels`` for
+    each inter-area edge among recurrent areas ``A0 … A{num_areas-1}``.
+    """
+    model_cfg = config_dir / "model" / "model.yaml"
+    if not model_cfg.is_file():
+        raise FileNotFoundError(f"Multi-task model config not found: {model_cfg}")
+
+    with model_cfg.open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+
+    num_areas = int(cfg["num_areas"])
+    num_channels = float(cfg.get("num_channels", 1))
+    area_names = [f"A{i}" for i in range(num_areas)]
+    name_to_idx = {name: idx for idx, name in enumerate(area_names)}
+
+    effectome = np.zeros((num_areas, num_areas), dtype=np.float64)
+    for edge in cfg.get("diagram") or []:
+        if len(edge) < 2:
+            continue
+        src, dst = str(edge[0]), str(edge[1])
+        if src not in name_to_idx or dst not in name_to_idx:
+            continue
+        effectome[name_to_idx[dst], name_to_idx[src]] = num_channels
+
+    return effectome, area_names
+
+
+def load_mrlfads_ic_enc_seq_len(run_dir: Path) -> int:
+    """Read ``ic_enc_seq_len`` from an MR-LFADS run's saved model config."""
+    model_cfg = run_dir / "configs" / "model" / "model.yaml"
+    if not model_cfg.is_file():
+        raise FileNotFoundError(f"MR-LFADS model config not found: {model_cfg}")
+
+    with model_cfg.open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+
+    return int(cfg["ic_enc_seq_len"])
+
+
+def resolve_mrlfads_run_data_h5(run_dir: Path) -> Path:
+    """
+    Resolve the training ``data.h5`` path from a run's saved datamodule config.
+
+    ``BasicDataModule`` loads ``{datapath_override}/{filename}/data.h5`` (``filename``
+    may be empty).
+    """
+    dm_cfg_path = run_dir / "configs" / "datamodule" / "datamodule.yaml"
+    if not dm_cfg_path.is_file():
+        raise FileNotFoundError(f"MR-LFADS datamodule config not found: {dm_cfg_path}")
+
+    with dm_cfg_path.open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+
+    datapath = cfg.get("datapath_override")
+    if not datapath:
+        raise ValueError(
+            f"{dm_cfg_path} has no datapath_override; pass --input-h5 explicitly."
+        )
+
+    filename = str(cfg.get("filename") or "")
+    data_h5 = Path(datapath) / filename / "data.h5"
+    if not data_h5.is_file():
+        raise FileNotFoundError(
+            f"Training data.h5 not found for run {run_dir.name}: {data_h5}"
+        )
+    return data_h5.resolve()
+
+
+def is_mrlfads_run_dir(path: Path) -> bool:
+    """True when ``path`` looks like a trained MR-LFADS run directory."""
+    return (
+        path.is_dir()
+        and (path / "configs" / "main.yaml").is_file()
+        and (path / "lightning_checkpoints").is_dir()
+        and any((path / "lightning_checkpoints").glob("*.ckpt"))
+    )
+
+
+def discover_mrlfads_runs(
+    runs_dir: Path,
+    *,
+    run_glob: str | None = None,
+    recursive: bool = False,
+) -> list[Path]:
+    """
+    Find MR-LFADS run directories under ``runs_dir``.
+
+    When ``recursive`` is True, also searches nested subdirectories (e.g.
+    ``rt_go/rt_go_kl0001_id…/``).
+    """
+    runs_dir = runs_dir.resolve()
+    if not runs_dir.is_dir():
+        raise FileNotFoundError(f"Runs directory not found: {runs_dir}")
+
+    if recursive:
+        candidates = [
+            path
+            for path in sorted(runs_dir.rglob("*"))
+            if path.is_dir() and is_mrlfads_run_dir(path)
+        ]
+    else:
+        candidates = []
+        for path in sorted(runs_dir.iterdir()):
+            if not path.is_dir():
+                continue
+            if not (path / "configs" / "main.yaml").is_file():
+                continue
+            ckpt_dir = path / "lightning_checkpoints"
+            if not ckpt_dir.is_dir() or not any(ckpt_dir.glob("*.ckpt")):
+                print(f"skip {path.name}: no checkpoint")
+                continue
+            candidates.append(path)
+
+    if run_glob:
+        candidates = [p for p in candidates if p.match(run_glob)]
+
+    return candidates
+
+
 # Split results for display on the dashboard
 def split_results_for_display(results: dict) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     region_rows: dict[str, dict] = {}

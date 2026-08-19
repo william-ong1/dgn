@@ -16,6 +16,7 @@ from .eval_utils import (
     get_area_names,
     get_heldout_neurons,
     load_memory_network_connectome_and_ranks,
+    load_multi_task_effectome,
 )
 
 
@@ -115,6 +116,38 @@ def effectome_cosine_similarity(submission: ArrayMap, config_dir: Path):
         })
 
     return results
+
+
+def effectome_cosine_similarity_multi_task(submission: ArrayMap, config_dir: Path) -> dict[str, float]:
+    """
+    Effectome cosine similarity (Scos) for multi-region task-trained DGNs.
+
+    Compares MR-LFADS ``effectome-scores`` against the ground-truth routing graph
+    encoded in the dataset's ``diagram`` (edge presence weighted by ``num_channels``).
+    """
+    if "effectome-scores" not in submission:
+        return {}
+
+    true_effectome_full, config_area_names = load_multi_task_effectome(config_dir)
+    sub_area_names = get_area_names(submission)
+    if not sub_area_names:
+        return {}
+
+    idx_map = {name: idx for idx, name in enumerate(config_area_names)}
+    n = len(sub_area_names)
+    true_effectome = np.zeros((n, n), dtype=np.float64)
+    for tgt_i, tgt in enumerate(sub_area_names):
+        for src_i, src in enumerate(sub_area_names):
+            if tgt in idx_map and src in idx_map:
+                true_effectome[tgt_i, src_i] = true_effectome_full[idx_map[tgt], idx_map[src]]
+
+    pred_effectome = np.asarray(submission["effectome-scores"], dtype=np.float64)
+    if pred_effectome.shape != true_effectome.shape:
+        return {}
+
+    np.fill_diagonal(pred_effectome, 0)
+    np.fill_diagonal(true_effectome, 0)
+    return {"effectome-cos-sim": cosine_similarity(pred_effectome, true_effectome)}
 
 
 def effectome_cosine_similarity_pass_decision(submission: ArrayMap) -> dict[str, float]:
@@ -283,12 +316,27 @@ def truth_input_decoding_pass_decision(
 
 def message_reconstruction(truth: ArrayMap, submission: ArrayMap) -> dict[str, float]:
     """
-    Message reconstruction R² by decoding the truth messages.
+    Message reconstruction R²: linearly predict ground-truth messages from inferred
+    messages (Experiment 3, Fig. 4d left).
     """
-    if "message-mesgs" not in submission: return {}
+    if "message-mesgs" not in submission or "message-mesgs" not in truth:
+        return {}
     y = np.asarray(truth["message-mesgs"], dtype=np.float64)
     y_hat = np.asarray(submission["message-mesgs"], dtype=np.float64)
     return {"message-r2": decode_r2_from_features(y, y_hat)}
+
+
+def message_reconstruction_reverse(truth: ArrayMap, submission: ArrayMap) -> dict[str, float]:
+    """
+    Reverse message reconstruction R²: linearly predict inferred messages from ground-
+    truth messages (Experiment 3, Fig. 4d right). Lower scores suggest inferred
+    messages carry information beyond the ground truth.
+    """
+    if "message-mesgs" not in submission or "message-mesgs" not in truth:
+        return {}
+    y = np.asarray(submission["message-mesgs"], dtype=np.float64)
+    y_hat = np.asarray(truth["message-mesgs"], dtype=np.float64)
+    return {"message-reverse-r2": decode_r2_from_features(y, y_hat)}
 
 
 def message_p_to_d_reconstruction(truth: ArrayMap, submission: ArrayMap) -> dict[str, float]:

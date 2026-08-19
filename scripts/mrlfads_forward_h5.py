@@ -17,6 +17,12 @@ effectome target at evaluation time (no connectome config). Downstream eval
 (``batch_mrlfads_eval`` / ``truth_input_decoding_pass_decision``) decodes
 ``cumsum`` from that predicted P→D message (expected low R²).
 
+Use ``--experiment-type multi_task`` for multi-task cognitive runs (areas A0–A3):
+exports neural activity, held-out indices, ``message-mesgs``, optional effectome /
+region-factors. Communication metrics compare inferred effectomes and messages
+against the DGN ground truth in ``data.h5`` (``message-mesgs``) and the dataset
+``diagram`` saved alongside ``data.h5``.
+
 Single-area runs (``num_other_areas=0``) export only neural activity, held-out indices,
 and optional ``region-factors`` — no effectome or message tensors.
 """
@@ -59,7 +65,7 @@ def _held_out_neuron_indices(model: Any, area_name: str, sess: int = 0) -> np.nd
 
 
 OutputDist = Literal["gaussian", "poisson"]
-ExperimentType = Literal["memory_network", "pass_decision"]
+ExperimentType = Literal["memory_network", "pass_decision", "multi_task"]
 
 
 def _readout_to_rate_numpy(area: Any, raw: torch.Tensor, output_dist: OutputDist) -> np.ndarray:
@@ -336,6 +342,24 @@ def write_mrlfads_area_activity_h5(
             ds.attrs["description"] = (
                 "Concatenated factor states from save_var[area].states[:, 1:, -fac_dim:] for each area."
             )
+        elif experiment_type == "multi_task":
+            if has_comm:
+                message_mesgs = reorder_predictions_to_input_trials(
+                    _extract_messages_memory_network(model), trial_idx
+                )
+
+                ds = g.create_dataset("message-mesgs", data=message_mesgs)
+                ds.attrs["type"] = "prediction"
+                ds.attrs["description"] = (
+                    "Concatenated communication posterior means from save_var[area].com_params "
+                    "for each area."
+                )
+
+            ds = g.create_dataset("region-factors", data=region_factors)
+            ds.attrs["type"] = "prediction"
+            ds.attrs["description"] = (
+                "Concatenated factor states from save_var[area].states[:, 1:, -fac_dim:] for each area."
+            )
         else:
             raise ValueError(f"unsupported experiment_type: {experiment_type}")
 
@@ -380,10 +404,11 @@ def main() -> None:
         "--experiment-type",
         type=str,
         default="memory_network",
-        choices=("memory_network", "pass_decision"),
+        choices=("memory_network", "pass_decision", "multi_task"),
         help=(
             "memory_network: export message-mesgs/message-latents; "
-            "pass_decision: export message-p_to_d (fixed P→D effectome at eval)."
+            "pass_decision: export message-p_to_d (fixed P→D effectome at eval); "
+            "multi_task: export message-mesgs + region-factors + effectome when comm present."
         ),
     )
     args = parser.parse_args()
@@ -393,6 +418,21 @@ def main() -> None:
     sys.path.insert(0, str(repo_root))
     sys.path.insert(0, str(repo_root / "src"))
     sys.path.insert(0, str(repo_root / "mrlfads2"))
+    # Local sibling checkout (common when mrlfads2 is not vendored in-repo)
+    sibling = repo_root.parent / "Projects" / "mrlfads2"
+    if sibling.is_dir():
+        sys.path.insert(0, str(sibling))
+
+    # PyTorch >=2.6 defaults weights_only=True; MR-LFADS ckpts store OmegaConf objects.
+    import torch
+
+    _torch_load = torch.load
+
+    def _torch_load_compat(*args, **kwargs):
+        kwargs.setdefault("weights_only", False)
+        return _torch_load(*args, **kwargs)
+
+    torch.load = _torch_load_compat
 
     import mrlfads.datamodules as mdm
     import mrlfads.paths as mpaths
@@ -417,6 +457,15 @@ def main() -> None:
         checkpoint_dir=str(run_dir),
     )
 
+    # BasicDataModule loads ``os.path.join(datapath_override, filename, "data.h5")``.
+    # Point it at --input-h5 so local/cluster paths in the run config are ignored.
+    if input_h5.name != "data.h5":
+        raise SystemExit(
+            f"--input-h5 must be named data.h5 (got {input_h5.name}); "
+            "BasicDataModule always appends data.h5 under datapath_override/filename."
+        )
+    datamodule.hparams.datapath_override = str(input_h5.parent)
+    datamodule.hparams.filename = ""
     datamodule.hparams.p_split = [0.0, 1.0]
     datamodule.setup()
 
