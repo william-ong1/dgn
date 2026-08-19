@@ -41,28 +41,35 @@ def infer_submission_pred_time_len(submission: ArrayMap) -> int:
     return int(t)
 
 
-# Slice the truth arrays along time dimension so truth arrays align with the submission time 0, skips meta-* keys.
+# Slice the truth arrays along time dimension so truth arrays align with the submission time 0.
 def slice_truth_for_time_alignment(truth: ArrayMap, *, truth_time_start: int, pred_time_len: int) -> ArrayMap:
     if truth_time_start < 0:
         raise ValueError(f"truth_time_start must be >= 0, got {truth_time_start}")
 
     end = truth_time_start + pred_time_len
     out: ArrayMap = {}
+    must_align_prefixes = ("area-", "message-")
 
-    # Iterate over the truth arrays and slice them along the time dimension
     for key, arr in truth.items():
         if key.startswith("meta-"):
             out[key] = arr
             continue
-        if isinstance(arr, np.ndarray) and arr.ndim >= 2:
-            if arr.shape[1] < end:
+        if not isinstance(arr, np.ndarray) or arr.ndim < 2:
+            out[key] = arr
+            continue
+
+        must_align = key.startswith(must_align_prefixes)
+        if arr.shape[1] < end:
+            if must_align:
                 raise ValueError(
                     f"Truth dataset {key!r} has time dim {arr.shape[1]} < {end} "
                     f"(truth_time_start={truth_time_start} + pred_time_len={pred_time_len})."
                 )
-            out[key] = arr[:, truth_time_start:end]
-        else:
+            # Trial-level auxiliaries (e.g. truth-amp1 with T=1) — leave unchanged.
             out[key] = arr
+            continue
+
+        out[key] = arr[:, truth_time_start:end]
 
     return out
 
