@@ -7,10 +7,19 @@ For each run:
   2. run_evaluation.py      -> model_outputs/<run_name>_eval.csv
 
 Then writes a combined summary CSV with:
-  - one row per run × region (e.g. P, D)
-  - plus a ``region=message-p_to_d`` row for pass_decision (decode targets,
-    especially cumsum, from the predicted P→D message; expected low for cumsum)
+  - one row per run × region (e.g. A0, A1, …)
   - plus a ``region=combined`` row when multiple areas are present
+
+Multi-task (mt_pois) example::
+
+    python scripts/batch_mrlfads_eval.py \\
+        --runs-dir /path/to/mrlfads/mt_runs \\
+        --experiment-type multi_task \\
+        --output-dist poisson \\
+        --recursive \\
+        --resolve-data-from-run
+
+Per-run ``data.h5`` and ``ic_enc_seq_len`` are read from each run's saved configs.
 """
 
 from __future__ import annotations
@@ -28,28 +37,50 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.evals.evals import evaluate_submission
-from src.evals.eval_utils import results_to_summary_rows, split_results_for_display
+from src.evals.eval_utils import (
+    discover_mrlfads_runs,
+    load_mrlfads_ic_enc_seq_len,
+    resolve_mrlfads_run_data_h5,
+    results_to_summary_rows,
+    split_results_for_display,
+)
 
 
-def _discover_runs(runs_dir: Path, run_glob: str | None = None) -> list[Path]:
-    runs_dir = runs_dir.resolve()
-    if not runs_dir.is_dir():
-        raise FileNotFoundError(f"Runs directory not found: {runs_dir}")
+def _discover_runs(
+    runs_dir: Path,
+    run_glob: str | None = None,
+    *,
+    recursive: bool = False,
+) -> list[Path]:
+    return discover_mrlfads_runs(runs_dir, run_glob=run_glob, recursive=recursive)
 
-    candidates = sorted(p for p in runs_dir.iterdir() if p.is_dir())
-    if run_glob:
-        candidates = [p for p in candidates if p.match(run_glob)]
 
-    runs = []
-    for run_dir in candidates:
-        if not (run_dir / "configs" / "main.yaml").is_file():
-            continue
-        ckpt_dir = run_dir / "lightning_checkpoints"
-        if not ckpt_dir.is_dir() or not any(ckpt_dir.glob("*.ckpt")):
-            print(f"skip {run_dir.name}: no checkpoint")
-            continue
-        runs.append(run_dir)
-    return runs
+def _resolve_truth_time_start(
+    *,
+    run_dir: Path,
+    experiment_type: str,
+    truth_time_start: int | str | None,
+) -> int:
+    if truth_time_start is None or str(truth_time_start).lower() == "auto":
+        if experiment_type in ("memory_network", "multi_task"):
+            return load_mrlfads_ic_enc_seq_len(run_dir)
+        return 0
+    return int(truth_time_start)
+
+
+def _resolve_run_input_h5(
+    run_dir: Path,
+    *,
+    input_h5: Path | None,
+    resolve_data_from_run: bool,
+) -> Path:
+    if input_h5 is not None:
+        return input_h5
+    if not resolve_data_from_run:
+        raise ValueError(
+            f"No --input-h5 for run {run_dir.name}; pass --input-h5 or --resolve-data-from-run."
+        )
+    return resolve_mrlfads_run_data_h5(run_dir)
 
 
 def _run_forward(
@@ -140,20 +171,29 @@ def main() -> None:
     parser.add_argument(
         "--input-h5",
         type=Path,
-        required=True,
-        help="Observed activity HDF5 passed to mrlfads_forward_h5.py.",
+        default=None,
+        help=(
+            "Observed activity HDF5 passed to mrlfads_forward_h5.py (must be named data.h5). "
+            "Omit when using --resolve-data-from-run to read each run's datamodule config."
+        ),
     )
     parser.add_argument(
         "--truth-h5",
         type=Path,
-        required=True,
-        help="Ground-truth HDF5 for run_evaluation.py (often same as --input-h5).",
+        default=None,
+        help=(
+            "Ground-truth HDF5 for evaluation (often same as --input-h5). "
+            "Defaults to the per-run input H5 when omitted."
+        ),
     )
     parser.add_argument(
         "--config-dir",
         type=Path,
-        default=Path("configs/memory_network"),
-        help="Evaluation config directory (e.g. configs/memory_network/).",
+        default=None,
+        help=(
+            "Evaluation config directory (e.g. configs/memory_network/ or configs/multi_task/). "
+            "Defaults to configs/<experiment-type>/ under the repo root."
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -173,9 +213,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--truth-time-start",
-        type=int,
-        default=10,
-        help="Align prediction time 0 to truth time k (ic_enc_seq_len for memory network).",
+        default="auto",
+        help=(
+            "Align prediction time 0 to truth time k. Use 'auto' to read ic_enc_seq_len "
+            "from each run's model config (memory_network / multi_task), or 0 for pass_decision."
+        ),
     )
     parser.add_argument(
         "--accelerator",
@@ -185,7 +227,20 @@ def main() -> None:
     parser.add_argument(
         "--run-glob",
         default=None,
-        help="Optional glob to filter run folder names (e.g. 'mn_pois_*').",
+        help="Optional glob to filter run folder names (e.g. 'rt_go_kl*' or '*_kl0001_*').",
+    )
+    parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Search nested subdirectories for run folders (e.g. rt_go/<run>/).",
+    )
+    parser.add_argument(
+        "--resolve-data-from-run",
+        action="store_true",
+        help=(
+            "Read each run's training data.h5 from configs/datamodule/datamodule.yaml "
+            "(datapath_override). Default for multi_task when --input-h5 is omitted."
+        ),
     )
     parser.add_argument(
         "--skip-existing",
@@ -233,11 +288,21 @@ def main() -> None:
 
     repo_root = REPO_ROOT
     runs_dir = args.runs_dir.expanduser().resolve()
-    input_h5 = args.input_h5.expanduser().resolve()
-    truth_h5 = args.truth_h5.expanduser().resolve()
-    # Relative --config-dir is anchored to the repo root (not the process cwd),
-    # so slurm jobs submitted from slurm_scripts/ still find configs/.
-    config_dir = args.config_dir.expanduser()
+
+    resolve_data_from_run = args.resolve_data_from_run or (
+        args.input_h5 is None and args.experiment_type == "multi_task"
+    )
+    input_h5_global = (
+        args.input_h5.expanduser().resolve() if args.input_h5 is not None else None
+    )
+    truth_h5_global = (
+        args.truth_h5.expanduser().resolve() if args.truth_h5 is not None else None
+    )
+
+    config_dir = args.config_dir
+    if config_dir is None:
+        config_dir = Path("configs") / args.experiment_type
+    config_dir = config_dir.expanduser()
     config_dir = (
         config_dir.resolve()
         if config_dir.is_absolute()
@@ -251,14 +316,21 @@ def main() -> None:
         else None
     )
 
-    if not input_h5.is_file():
-        raise SystemExit(f"input H5 not found: {input_h5}")
-    if not truth_h5.is_file():
-        raise SystemExit(f"truth H5 not found: {truth_h5}")
+    if input_h5_global is not None and input_h5_global.name != "data.h5":
+        raise SystemExit(
+            f"--input-h5 must be named data.h5 (got {input_h5_global.name}); "
+            "mrlfads_forward_h5 sets datapath_override to its parent directory."
+        )
+    if input_h5_global is not None and not input_h5_global.is_file():
+        raise SystemExit(f"input H5 not found: {input_h5_global}")
+    if not resolve_data_from_run and input_h5_global is None:
+        raise SystemExit("Pass --input-h5 or --resolve-data-from-run.")
+    if truth_h5_global is not None and not truth_h5_global.is_file():
+        raise SystemExit(f"truth H5 not found: {truth_h5_global}")
     if not config_dir.is_dir():
         raise SystemExit(f"config dir not found: {config_dir}")
 
-    runs = _discover_runs(runs_dir, run_glob=args.run_glob)
+    runs = _discover_runs(runs_dir, run_glob=args.run_glob, recursive=args.recursive)
     if not runs:
         raise SystemExit(f"No runnable checkpoints found in {runs_dir}")
 
@@ -269,6 +341,22 @@ def main() -> None:
         run_name = run_dir.name
         output_h5 = output_dir / f"{run_name}_outputs.h5"
         eval_csv = output_dir / f"{run_name}_eval.csv"
+
+        try:
+            input_h5 = _resolve_run_input_h5(
+                run_dir,
+                input_h5=input_h5_global,
+                resolve_data_from_run=resolve_data_from_run,
+            )
+            truth_h5 = truth_h5_global if truth_h5_global is not None else input_h5
+            truth_time_start = _resolve_truth_time_start(
+                run_dir=run_dir,
+                experiment_type=args.experiment_type,
+                truth_time_start=args.truth_time_start,
+            )
+        except (FileNotFoundError, ValueError) as e:
+            print(f"skip {run_name}: {e}")
+            continue
 
         if not args.eval_only:
             if args.skip_existing and output_h5.is_file():
@@ -291,7 +379,7 @@ def main() -> None:
             print(f"skip eval {run_name}: missing {output_h5}")
             continue
 
-        print(f">> evaluate {run_name}")
+        print(f">> evaluate {run_name} (truth_time_start={truth_time_start}, data={input_h5})")
         try:
             results = _run_eval(
                 submission_h5=output_h5,
@@ -299,7 +387,7 @@ def main() -> None:
                 config_dir=config_dir,
                 experiment_type=args.experiment_type,
                 output_dist=args.output_dist,
-                truth_time_start=args.truth_time_start,
+                truth_time_start=truth_time_start,
                 output_csv=eval_csv,
                 rates_truth_h5=rates_truth_h5,
                 poisson_dt=args.poisson_dt,

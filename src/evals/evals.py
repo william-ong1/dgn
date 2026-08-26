@@ -12,15 +12,18 @@ from .eval_utils import (
     infer_submission_pred_time_len,
     load_memory_network_lag,
     load_session_arrays,
+    resolve_dataset_config_dir,
     slice_truth_for_time_alignment,
 )
 
 from .metrics import (
     effectome_cosine_similarity,
+    effectome_cosine_similarity_multi_task,
     effectome_cosine_similarity_pass_decision,
     lag_recovery_memory_network,
     message_latent_reconstruction,
     message_reconstruction,
+    message_reconstruction_reverse,
     neural_activity_rate_reconstruction,
     neural_activity_reconstruction,
     truth_input_decoding_memory_network,
@@ -172,6 +175,7 @@ def evaluate_submission(
             poisson_rate_max=poisson_rate_max,
         )
 
+    eval_config = config_path
     if experiment_type == "memory_network":
         results = evaluate_memory_network_submission(
             submission, truth, config_path, output_dist, rates_truth=rates_truth
@@ -181,8 +185,13 @@ def evaluate_submission(
             submission, truth, config_path, output_dist, rates_truth=rates_truth
         )
     elif experiment_type == "multi_task":
+        eval_config = resolve_dataset_config_dir(truth_path, config_path)
         results = evaluate_multi_task_submission(
-            submission, truth, config_path, output_dist, rates_truth=rates_truth
+            submission,
+            truth,
+            eval_config,
+            output_dist,
+            rates_truth=rates_truth,
         )
     else:
         results = {}
@@ -192,7 +201,7 @@ def evaluate_submission(
             submission=submission,
             truth=truth,
             rates_truth=rates_truth,
-            config_dir=config_path,
+            config_dir=eval_config,
             experiment_type=experiment_type,
             output_dist=output_dist,
             n_bootstrap=bootstrap_n,
@@ -404,7 +413,25 @@ def evaluate_multi_task_submission(
 ) -> Any:
     """Evaluate a multi-task submission against ground truth."""
 
-    results = {}
+    results: dict[str, Any] = {}
+
     neural_activity = neural_activity_reconstruction(submission, truth, output_dist)
-    results.update(_merge_neural_rate_metrics(neural_activity, rates_truth, submission))
+    neural_activity = _merge_neural_rate_metrics(
+        neural_activity,
+        rates_truth,
+        submission,
+    )
+    results["neural-activity"] = neural_activity
+
+    struct: dict[str, float] = {}
+    struct.update(effectome_cosine_similarity_multi_task(submission, config_dir))
+    struct.update(message_reconstruction(truth, submission))
+    struct.update(message_reconstruction_reverse(truth, submission))
+    if struct:
+        results["structure"] = struct
+
+    aggregates = _collect_neural_activity_means(neural_activity)
+    aggregates.update({k: v for k, v in struct.items() if isinstance(v, (int, float, np.floating))})
+    results["aggregates"] = aggregates
+
     return results
