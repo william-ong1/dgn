@@ -7,26 +7,23 @@ train time). The main readout maps those factors -> held-in activity; the
 predictor maps factors -> held-out activity.
 
 For each run with ``{run_name}_outputs.h5`` and aligned ground-truth ``data.h5``,
-this script reports:
+this script reports **both standard and McFadden R²** (same convention as
+``batch_mrlfads_eval``: spikes in ``data.h5`` vs predicted rates):
 
 **Factor -> activity (Ridge CV, trial split)**
-  - ``factors_to_held_out`` — area factors predict held-out ground-truth activity
-  - ``factors_to_held_in``  — area factors predict held-in ground-truth activity
+  - ``factors_to_held_out`` / ``factors_to_held_in``
 
 **Model heads** (from ``mrlfads_forward_h5`` exports when present)
-  - ``readout_held_in`` / ``readout_held_out`` — main readout vs truth on each subset
-  - ``predictor_held_out`` — predictor vs held-out truth (native held-out head)
+  - ``readout_held_in`` / ``readout_held_out`` / ``predictor_held_out``
 
 **Neural cross-predict (Ridge CV on ground-truth activity)**
-  - ``held_in_to_held_out`` — held-in activity predicts held-out activity
-  - ``held_out_to_held_in`` — held-out activity predicts held-in activity
+  - ``held_in_to_held_out`` / ``held_out_to_held_in``
 
 **Reconstruction** (merged submission, same as eval CSV)
   - ``recon_held_in`` / ``recon_held_out``
 
-Note: a single forward pass yields one factor trajectory (inferred from the
-held-in pathway). True ``factors inferred only from held-out neurons`` would
-require re-running forward with swapped ``hn_indices``.
+Each metric is written twice in the CSV with ``r2_type`` = ``standard`` or
+``mcfadden``.
 
 Example::
 
@@ -63,10 +60,12 @@ from src.evals.eval_utils import (  # noqa: E402
     resolve_mrlfads_run_data_h5,
     slice_truth_for_time_alignment,
 )
-from src.evals.metrics import standard_r2  # noqa: E402
+from src.evals.metrics import mcfadden_r2_poisson, standard_r2  # noqa: E402
 
 SUPPORTED_TASKS = ("rt_go", "rt_go_anti", "dly_go", "dly_go_anti")
 DEFAULT_AREAS = ("A0", "A1", "A2", "A3")
+R2_TYPES = ("standard", "mcfadden")
+MIN_RATE = 1e-8
 
 METRICS = (
     "factors_to_held_out",
@@ -150,7 +149,6 @@ def _load_factor_slices(outputs_h5: Path, areas: list[str]) -> dict[str, slice]:
 
 
 def _load_area_fac_dims(run_dir: Path, areas: list[str]) -> dict[str, int] | None:
-    """Read per-area ``fac_dim`` from the saved MR-LFADS model config when present."""
     model_cfg = run_dir / "configs" / "model" / "model.yaml"
     if not model_cfg.is_file():
         return None
@@ -189,19 +187,39 @@ def _factor_slices_from_run(run_dir: Path, areas: list[str], factor_width: int) 
     return {area: slice(i * fac_dim, (i + 1) * fac_dim) for i, area in enumerate(areas)}
 
 
-def ridge_cross_r2(
+def _rates_for_mcfadden(y_pred: np.ndarray) -> np.ndarray:
+    """Clip predicted rates to a small positive floor for Poisson NLL."""
+    return np.maximum(np.asarray(y_pred, dtype=np.float64), MIN_RATE)
+
+
+def direct_r2_pair(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
+    """
+    Standard + McFadden R² for direct array comparison.
+
+    Matches ``neural_activity_reconstruction``: spike counts in ``y_true``,
+    predicted rates in ``y_pred``.
+    """
+    rates = _rates_for_mcfadden(y_pred)
+    return {
+        "standard": float(standard_r2(y_true, y_pred)),
+        "mcfadden": float(mcfadden_r2_poisson(y_true, rates)),
+    }
+
+
+def ridge_cross_r2_pair(
     X: np.ndarray,
     Y: np.ndarray,
     *,
     test_size: float = 0.2,
     random_state: int = 0,
     alpha: float = 1.0,
-) -> float:
-    """Trial-held-out Ridge R² predicting Y from X. Shapes (B, T, F) and (B, T, C)."""
+) -> dict[str, float]:
+    """Trial-held-out Ridge R² (standard + McFadden). Shapes (B, T, F) and (B, T, C)."""
+    nan = {k: float("nan") for k in R2_TYPES}
     if Y.ndim == 2:
         Y = Y[..., None]
     if Y.shape[-1] == 0 or X.shape[-1] == 0 or X.shape[1] == 0:
-        return float("nan")
+        return nan
 
     idx = np.arange(X.shape[0])
     tr, te = train_test_split(idx, test_size=test_size, random_state=random_state, shuffle=True)
@@ -209,14 +227,55 @@ def ridge_cross_r2(
     x_tr = X[tr].reshape(-1, X.shape[-1])
     y_tr = Y[tr].reshape(-1, Y.shape[-1])
     x_te = X[te].reshape(-1, X.shape[-1])
-    y_te = Y[te].reshape(-1, Y.shape[-1])
 
     if x_tr.shape[0] < 32 or x_te.shape[0] < 16:
-        return float("nan")
+        return nan
 
     reg = Ridge(alpha=alpha)
     reg.fit(x_tr, y_tr)
-    return float(standard_r2(y_te, reg.predict(x_te)))
+
+    n_te = len(te)
+    t_len = X.shape[1]
+    n_ch = Y.shape[-1]
+    y_te = Y[te].reshape(n_te, t_len, n_ch)
+    pred = reg.predict(x_te).reshape(n_te, t_len, n_ch)
+    rates = _rates_for_mcfadden(pred)
+
+    return {
+        "standard": float(standard_r2(y_te, pred)),
+        "mcfadden": float(mcfadden_r2_poisson(y_te, rates)),
+    }
+
+
+def _append_score_rows(
+    rows: list[dict],
+    *,
+    scores: dict[str, dict[str, float]],
+    meta: dict,
+    area: str,
+    ho_mask: np.ndarray,
+    fac_dim: int,
+    outputs_h5: Path,
+    truth_path: Path,
+) -> None:
+    for metric, by_type in scores.items():
+        for r2_type in R2_TYPES:
+            rows.append(
+                {
+                    "run_name": meta["run_name"],
+                    "task": meta["task"],
+                    "kl": meta["kl"],
+                    "area": area,
+                    "metric": metric,
+                    "r2_type": r2_type,
+                    "score": by_type.get(r2_type, float("nan")),
+                    "n_held_in": int((~ho_mask).sum()),
+                    "n_held_out": int(ho_mask.sum()),
+                    "fac_dim": fac_dim,
+                    "outputs_h5": str(outputs_h5),
+                    "truth_h5": str(truth_path),
+                }
+            )
 
 
 def process_mrlfads_run(
@@ -231,6 +290,7 @@ def process_mrlfads_run(
         raise FileNotFoundError(f"Missing outputs H5: {outputs_h5}")
 
     meta = parse_mrlfads_run_name(run_dir.name)
+    meta["run_name"] = run_dir.name
     truth_path = truth_h5 or resolve_mrlfads_run_data_h5(run_dir)
 
     submission = load_session_arrays(outputs_h5)
@@ -278,26 +338,28 @@ def process_mrlfads_run(
             flush=True,
         )
 
-        scores: dict[str, float] = {}
+        scores: dict[str, dict[str, float]] = {}
 
         if truth_ho is not None and factors.size:
             t0 = time.time()
-            scores["factors_to_held_out"] = ridge_cross_r2(
+            scores["factors_to_held_out"] = ridge_cross_r2_pair(
                 factors, truth_ho, random_state=seed
             )
+            s, m = scores["factors_to_held_out"]["standard"], scores["factors_to_held_out"]["mcfadden"]
             print(
-                f"      factors -> held_out   R2={scores['factors_to_held_out']:+.4f}  "
+                f"      factors -> held_out   std={s:+.4f}  mcfadden={m:+.4f}  "
                 f"({time.time() - t0:.1f}s)",
                 flush=True,
             )
 
         if truth_hi is not None and factors.size:
             t0 = time.time()
-            scores["factors_to_held_in"] = ridge_cross_r2(
+            scores["factors_to_held_in"] = ridge_cross_r2_pair(
                 factors, truth_hi, random_state=seed
             )
+            s, m = scores["factors_to_held_in"]["standard"], scores["factors_to_held_in"]["mcfadden"]
             print(
-                f"      factors -> held_in    R2={scores['factors_to_held_in']:+.4f}  "
+                f"      factors -> held_in    std={s:+.4f}  mcfadden={m:+.4f}  "
                 f"({time.time() - t0:.1f}s)",
                 flush=True,
             )
@@ -309,56 +371,54 @@ def process_mrlfads_run(
             if truth_hi is not None:
                 readout_hi = _select_neurons(readout, ho_mask, "held_in")
                 if readout_hi is not None:
-                    scores["readout_held_in"] = float(standard_r2(truth_hi, readout_hi))
+                    scores["readout_held_in"] = direct_r2_pair(truth_hi, readout_hi)
             if truth_ho is not None:
                 readout_ho = _select_neurons(readout, ho_mask, "held_out")
                 if readout_ho is not None:
-                    scores["readout_held_out"] = float(standard_r2(truth_ho, readout_ho))
+                    scores["readout_held_out"] = direct_r2_pair(truth_ho, readout_ho)
         else:
             print(f"      (no {readout_key}; re-run forward pass for readout metrics)", flush=True)
 
         if pred_key in submission and truth_ho is not None:
             predictor = np.asarray(submission[pred_key], dtype=np.float32)
-            scores["predictor_held_out"] = float(standard_r2(truth_ho, predictor))
+            scores["predictor_held_out"] = direct_r2_pair(truth_ho, predictor)
         elif truth_ho is not None:
             print(f"      (no {pred_key}; re-run forward pass for predictor metrics)", flush=True)
 
         if truth_hi is not None and truth_ho is not None:
             t0 = time.time()
-            scores["held_in_to_held_out"] = ridge_cross_r2(
+            scores["held_in_to_held_out"] = ridge_cross_r2_pair(
                 truth_hi, truth_ho, random_state=seed
             )
-            scores["held_out_to_held_in"] = ridge_cross_r2(
+            scores["held_out_to_held_in"] = ridge_cross_r2_pair(
                 truth_ho, truth_hi, random_state=seed
             )
+            hi_ho = scores["held_in_to_held_out"]
+            ho_hi = scores["held_out_to_held_in"]
             print(
-                f"      held_in -> held_out    R2={scores['held_in_to_held_out']:+.4f}  "
-                f"held_out -> held_in R2={scores['held_out_to_held_in']:+.4f}  "
+                f"      held_in -> held_out    std={hi_ho['standard']:+.4f}  "
+                f"mcfadden={hi_ho['mcfadden']:+.4f}  "
+                f"held_out -> held_in std={ho_hi['standard']:+.4f}  "
+                f"mcfadden={ho_hi['mcfadden']:+.4f}  "
                 f"({time.time() - t0:.1f}s)",
                 flush=True,
             )
 
         if recon_hi is not None and truth_hi is not None:
-            scores["recon_held_in"] = float(standard_r2(truth_hi, recon_hi))
+            scores["recon_held_in"] = direct_r2_pair(truth_hi, recon_hi)
         if recon_ho is not None and truth_ho is not None:
-            scores["recon_held_out"] = float(standard_r2(truth_ho, recon_ho))
+            scores["recon_held_out"] = direct_r2_pair(truth_ho, recon_ho)
 
-        for metric, score in scores.items():
-            rows.append(
-                {
-                    "run_name": run_dir.name,
-                    "task": meta["task"],
-                    "kl": meta["kl"],
-                    "area": area,
-                    "metric": metric,
-                    "score": score,
-                    "n_held_in": int((~ho_mask).sum()),
-                    "n_held_out": int(ho_mask.sum()),
-                    "fac_dim": int(factors.shape[-1]),
-                    "outputs_h5": str(outputs_h5),
-                    "truth_h5": str(truth_path),
-                }
-            )
+        _append_score_rows(
+            rows,
+            scores=scores,
+            meta=meta,
+            area=area,
+            ho_mask=ho_mask,
+            fac_dim=int(factors.shape[-1]),
+            outputs_h5=outputs_h5,
+            truth_path=truth_path,
+        )
 
     return rows
 
@@ -367,8 +427,10 @@ def print_summary(df: pd.DataFrame) -> None:
     if df.empty:
         return
 
-    print("\n=== Mean scores by task x metric ===", flush=True)
-    piv = df.pivot_table(index=["task", "metric"], values="score", aggfunc="mean")
+    print("\n=== Mean scores by task x metric x r2_type ===", flush=True)
+    piv = df.pivot_table(
+        index=["task", "metric"], columns="r2_type", values="score", aggfunc="mean"
+    )
     print(piv.to_string(float_format=lambda v: f"{v:+.4f}"), flush=True)
 
     core = df[df["metric"].isin(["factors_to_held_out", "factors_to_held_in"])]
@@ -377,8 +439,9 @@ def print_summary(df: pd.DataFrame) -> None:
 
     print("\n=== factors -> neurons (mean over runs/areas) ===", flush=True)
     print(
-        core.pivot_table(index="task", columns="metric", values="score", aggfunc="mean")
-        .to_string(float_format=lambda v: f"{v:+.4f}"),
+        core.pivot_table(
+            index=["task", "metric"], columns="r2_type", values="score", aggfunc="mean"
+        ).to_string(float_format=lambda v: f"{v:+.4f}"),
         flush=True,
     )
 
@@ -436,6 +499,7 @@ def main() -> None:
     print(f"Outputs dir: {outputs_dir}", flush=True)
     print(f"Areas: {args.area}", flush=True)
     print(f"Metrics: {list(METRICS)}", flush=True)
+    print(f"R² types: {list(R2_TYPES)}", flush=True)
     print(f"Output: {output_path}\n", flush=True)
 
     rows: list[dict] = []
