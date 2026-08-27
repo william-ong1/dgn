@@ -22,6 +22,36 @@ def save_run_configs(run_dir_path: Path, cfg_dir: Path) -> None:
     shutil.copytree(cfg_dir, save_dir, dirs_exist_ok=True)
 
 
+def persist_realized_diagram(model, run_dir_path: Path) -> None:
+    """Write the model's realized ``diagram`` into the run's saved configs.
+
+    Random connectomes are sampled at init; eval and reruns read
+    ``configs/model/model.yaml``, so the sampled edges must be stored there.
+    """
+    diagram = getattr(getattr(model, "hparams", None), "diagram", None)
+    if not diagram:
+        return
+    diagram_list = [[str(src), str(dst), str(weight)] for src, dst, weight in diagram]
+
+    OmegaConf.save(
+        OmegaConf.create({"diagram": diagram_list}),
+        run_dir_path / "realized_diagram.yaml",
+    )
+
+    model_yaml = run_dir_path / "configs" / "model" / "model.yaml"
+    if model_yaml.is_file():
+        cfg = OmegaConf.load(model_yaml)
+        cfg.diagram = diagram_list
+        OmegaConf.save(cfg, model_yaml)
+
+    resolved = run_dir_path / "resolved_config.yaml"
+    if resolved.is_file():
+        cfg = OmegaConf.load(resolved)
+        if "model" in cfg:
+            cfg.model.diagram = diagram_list
+            OmegaConf.save(cfg, resolved)
+
+
 def get_checkpoint_path(path: str, *, anchor: Path) -> str:
     """
     Resolve a checkpoint path for ``Trainer.fit(ckpt_path=...)``.
@@ -97,6 +127,7 @@ def run_data_generation(
     # Instantiate the datamodule and model
     datamodule = instantiate(config_obj.datamodule, _convert_="all")
     model = instantiate(config_obj.model)
+    persist_realized_diagram(model, run_dir_path)
 
     # Instantiate the trainer
     trainer = instantiate(

@@ -2,41 +2,16 @@ _target_: models.MultiTaskNet
 
 angle_scale: 1
 delay: 5
-diagram:
-  - - A0
-    - A1
-    - '0'
-  - - A0
-    - A2
-    - '0'
-  - - A1
-    - A0
-    - '0'
-  - - A1
-    - A2
-    - '0'
-  - - A2
-    - A0
-    - '0'
-  - - A2
-    - A3
-    - '0'
-  - - A3
-    - A0
-    - '0'
-  - - A3
-    - A1
-    - '0'
-  - - A3
-    - A4
-    - '1'
-  - - A3
-    - A4
-    - '2'
+diagram: null
+graph_kwargs:
+  perc_conns: 0.67
+  shortest: 3
 
 lr_init: 5e-4
+l2_scale: 0.0
+l2_comm_scale: 0.0
 hidden_size: 64
-noise: 0.01
+noise: 0.1
 num_areas: 4
 num_channels: 8
 rnn_type: rnncell
