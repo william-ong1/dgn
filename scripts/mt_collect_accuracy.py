@@ -56,11 +56,13 @@ def parse_run_name(name: str) -> dict:
 
 
 def find_event_file(run_dir: Path) -> Path | None:
+    """Find events only in this directory (not recursive).
+
+    Recursive search is unsafe for sweep roots like multi_task/, which contain
+    many nested run folders each with their own events file.
+    """
     files = sorted(run_dir.glob("events.out.tfevents*"))
-    if files:
-        return files[0]
-    nested = sorted(run_dir.glob("**/events.out.tfevents*"))
-    return nested[0] if nested else None
+    return files[0] if files else None
 
 
 def load_scalar_series(event_file: Path, tag: str) -> tuple[list[int], list[float]]:
@@ -85,19 +87,22 @@ def summarize_series(steps: list[int], values: list[float]) -> dict:
 
 def discover_run_dirs(runs_dir: Path, pattern: str) -> list[Path]:
     """Find run dirs under runs_dir or one level down (task_base/multi_task_*)."""
+    # Single run dir passed directly.
     if find_event_file(runs_dir) is not None:
         return [runs_dir]
 
+    # Pattern matches directly under runs_dir (e.g. dly_go/).
     direct = sorted(p for p in runs_dir.glob(pattern) if p.is_dir() and find_event_file(p))
     if direct:
         return direct
 
-    nested: dict[Path, None] = {}
+    # multi_task/<task_base>/multi_task_* layout.
+    nested: list[Path] = []
     for task_dir in sorted(p for p in runs_dir.iterdir() if p.is_dir()):
-        for run_dir in task_dir.glob(pattern):
+        for run_dir in sorted(task_dir.glob(pattern)):
             if run_dir.is_dir() and find_event_file(run_dir):
-                nested[run_dir] = None
-    return sorted(nested)
+                nested.append(run_dir)
+    return nested
 
 
 def task_base_for_run(run_dir: Path, runs_dir: Path) -> str:
