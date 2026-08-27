@@ -5,8 +5,8 @@ Plot MultiTaskNet train/valid loss curves — one figure per cognitive task.
 Discovers Hyak-style layouts like ``mt_collect_accuracy.py``:
     multi_task/<task_base>/multi_task_*_h*_n*_seed*/events.out.tfevents*
 
-For each task, writes one PNG with panels by hidden size; within a panel,
-curves are colored by noise (train=solid, valid=dashed).
+For each task, writes one PNG (single axes). Each (hidden, noise) run gets a
+distinct color; train=solid, valid=dashed.
 
 Example:
     python scripts/mt_plot_loss_curves.py /gscratch/golub/wong2/runs/multi_task \\
@@ -81,10 +81,12 @@ def load_scalars(event_file: Path, tag: str) -> tuple[list[int], list[float]]:
     return [s.step for s in scalars], [float(s.value) for s in scalars]
 
 
-def noise_colors(noises: list[float]) -> dict[float, tuple]:
-    uniq = sorted(set(noises))
-    cmap = plt.get_cmap("tab10" if len(uniq) <= 10 else "tab20")
-    return {n: cmap(i % cmap.N) for i, n in enumerate(uniq)}
+def run_colors(runs: list[dict]) -> dict[tuple[int, float], tuple]:
+    """Distinct color per (hidden_size, noise) pair."""
+    keys = sorted({(r["hidden_size"], r["noise"]) for r in runs})
+    n = len(keys)
+    cmap = plt.get_cmap("tab20" if n <= 20 else "hsv")
+    return {k: cmap(i / max(n - 1, 1)) if n > 20 else cmap(i % cmap.N) for i, k in enumerate(keys)}
 
 
 def plot_task_loss(
@@ -95,62 +97,51 @@ def plot_task_loss(
     *,
     dpi: int = 150,
 ) -> None:
-    """One figure: panels by hidden size; color=noise; train solid / valid dashed."""
-    hiddens = sorted({r["hidden_size"] for r in runs})
-    color_of = noise_colors([r["noise"] for r in runs])
+    """One PNG / one axes: color = (h, noise); train solid / valid dashed."""
+    color_of = run_colors(runs)
+    fig, ax = plt.subplots(figsize=(9, 5.5))
 
-    n = len(hiddens)
-    n_cols = 2 if n > 1 else 1
-    n_rows = (n + n_cols - 1) // n_cols
-    fig, axes = plt.subplots(
-        n_rows,
-        n_cols,
-        figsize=(6.5 * n_cols, 4.2 * n_rows),
-        sharex=False,
-        squeeze=False,
-    )
+    ordered = sorted(runs, key=lambda r: (r["hidden_size"], r["noise"], r["seed"]))
+    for r in ordered:
+        color = color_of[(r["hidden_size"], r["noise"])]
+        if r["train_x"]:
+            ax.plot(
+                r["train_x"],
+                r["train_y"],
+                color=color,
+                linestyle="-",
+                linewidth=1.3,
+                alpha=0.9,
+            )
+        if r["valid_x"]:
+            ax.plot(
+                r["valid_x"],
+                r["valid_y"],
+                color=color,
+                linestyle="--",
+                linewidth=1.3,
+                alpha=0.9,
+            )
 
-    for idx, h in enumerate(hiddens):
-        ax = axes[idx // n_cols][idx % n_cols]
-        subset = sorted(
-            [r for r in runs if r["hidden_size"] == h],
-            key=lambda r: (r["noise"], r["seed"]),
-        )
-        for r in subset:
-            color = color_of[r["noise"]]
-            if r["train_x"]:
-                ax.plot(
-                    r["train_x"],
-                    r["train_y"],
-                    color=color,
-                    linestyle="-",
-                    linewidth=1.4,
-                    alpha=0.9,
-                )
-            if r["valid_x"]:
-                ax.plot(
-                    r["valid_x"],
-                    r["valid_y"],
-                    color=color,
-                    linestyle="--",
-                    linewidth=1.4,
-                    alpha=0.9,
-                )
-        ax.set_title(f"h={h}")
-        ax.set_xlabel("step")
-        ax.set_ylabel(metric)
-        ax.grid(alpha=0.3)
-
-    for idx in range(n, n_rows * n_cols):
-        axes[idx // n_cols][idx % n_cols].set_visible(False)
+    ax.set_xlabel("step")
+    ax.set_ylabel(metric)
+    ax.set_title(f"{task} — train vs valid {metric}")
+    ax.grid(alpha=0.3)
 
     legend_handles = [
         Line2D([0], [0], color="black", linestyle="-", linewidth=1.6, label="train"),
         Line2D([0], [0], color="black", linestyle="--", linewidth=1.6, label="valid"),
     ]
-    for noise, color in color_of.items():
+    for (h, n), color in color_of.items():
         legend_handles.append(
-            Line2D([0], [0], color=color, linestyle="-", linewidth=2.0, label=f"n={noise:g}")
+            Line2D(
+                [0],
+                [0],
+                color=color,
+                linestyle="-",
+                linewidth=2.0,
+                label=f"h={h}, n={n:g}",
+            )
         )
 
     fig.legend(
@@ -158,9 +149,9 @@ def plot_task_loss(
         loc="center left",
         bbox_to_anchor=(1.01, 0.5),
         frameon=True,
-        title="style / noise",
+        title="style / (h, n)",
+        fontsize=8,
     )
-    fig.suptitle(f"{task} — train vs valid {metric}", fontsize=13)
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
