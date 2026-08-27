@@ -260,6 +260,11 @@ def write_mrlfads_area_activity_h5(
 
         # Write each area's predictions (held-out channels from ``preds``, rest from ``outputs``)
         for area_name in model.area_names:
+            area = model.areas[area_name]
+            raw_out = model.outputs[area_name][0]
+            readout = reorder_predictions_to_input_trials(
+                _readout_to_rate_numpy(area, raw_out, output_dist), trial_idx
+            )
             pred_mean = _merged_area_predictive_means(
                 model, area_name, sess=0, output_dist=output_dist
             )
@@ -270,6 +275,35 @@ def write_mrlfads_area_activity_h5(
                 ds.attrs["representation"] = "mrlfads_poisson_rate"
             else:
                 ds.attrs["representation"] = "mrlfads_gaussian_mean"
+
+            ds_ro = g.create_dataset(f"area-{area_name}-readout", data=readout)
+            ds_ro.attrs["type"] = "hidden_state"
+            ds_ro.attrs["head"] = "readout"
+            ds_ro.attrs["description"] = (
+                "Main readout (outputs) for all neurons — evaluate cross-subset generalization."
+            )
+
+            hn_idx = _held_out_neuron_indices(model, area_name, sess=0)
+            preds_dict = getattr(model, "preds", None)
+            if (
+                hn_idx.size
+                and preds_dict is not None
+                and area_name in preds_dict
+                and len(preds_dict[area_name]) > 0
+            ):
+                raw_pr = preds_dict[area_name][0]
+                if raw_pr.shape[-1]:
+                    predictor = reorder_predictions_to_input_trials(
+                        _readout_to_rate_numpy(area, raw_pr, output_dist), trial_idx
+                    )
+                    ds_pr = g.create_dataset(
+                        f"area-{area_name}-predictor-held-out", data=predictor
+                    )
+                    ds_pr.attrs["type"] = "hidden_state"
+                    ds_pr.attrs["head"] = "predictor"
+                    ds_pr.attrs["description"] = (
+                        "Predictor head (preds) for held-out neurons only."
+                    )
 
         # Held-out neuron indices (MR-LFADS ``hn_indices``) — indices along the neuron dim of ``area-*``.
         for area_name in model.area_names:
@@ -299,6 +333,18 @@ def write_mrlfads_area_activity_h5(
         region_factors = reorder_predictions_to_input_trials(
             _region_factors_from_model(model), trial_idx
         )
+
+        fac_offset = 0
+        for area_name in model.area_names:
+            fac_dim = int(model.areas[area_name].hparams.fac_dim)
+            ds = g.create_dataset(
+                f"meta-factor-slice-area-{area_name}",
+                data=np.array([fac_offset, fac_offset + fac_dim], dtype=np.int64),
+            )
+            ds.attrs["description"] = (
+                f"Half-open slice [start, end) into region-factors for area {area_name}."
+            )
+            fac_offset += fac_dim
 
         if experiment_type == "memory_network":
             if has_comm:
