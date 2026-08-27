@@ -25,6 +25,14 @@ against the DGN ground truth in ``data.h5`` (``message-mesgs``) and the dataset
 
 Single-area runs (``num_other_areas=0``) export only neural activity, held-out indices,
 and optional ``region-factors`` — no effectome or message tensors.
+
+Also exports per-area readout / predictor heads and factor slice metadata for
+held-in vs held-out cross-prediction analysis::
+
+    area-{A}                      merged (readout + predictor on held-out cols)
+    area-{A}-readout              main readout on all neurons
+    area-{A}-predictor-held-out   predictor head (held-out neurons only)
+    meta-factor-slice-area-{A}    [start, end) slice into ``region-factors``
 """
 
 import argparse
@@ -66,6 +74,7 @@ def _held_out_neuron_indices(model: Any, area_name: str, sess: int = 0) -> np.nd
 
 OutputDist = Literal["gaussian", "poisson"]
 ExperimentType = Literal["memory_network", "pass_decision", "multi_task"]
+SESSION = 0  # single-session export (validation session 0)
 
 
 def _readout_to_rate_numpy(area: Any, raw: torch.Tensor, output_dist: OutputDist) -> np.ndarray:
@@ -116,6 +125,109 @@ def _merged_area_predictive_means(
     merged = np.copy(pred_mean)
     merged[..., hn_idx] = pred_mean_ho
     return merged
+
+
+def _area_export_arrays(
+    model: Any,
+    area_name: str,
+    *,
+    sess: int,
+    output_dist: OutputDist,
+) -> tuple[np.ndarray, np.ndarray | None, np.ndarray]:
+    """
+    Return (readout, predictor_held_out, merged) arrays for one area.
+
+    ``readout`` — main readout (``outputs``) for all neurons.
+    ``predictor_held_out`` — predictor (``preds``) for held-out neurons only, or None.
+    ``merged`` — readout with held-out columns replaced by predictor (eval submission).
+    """
+    area = model.areas[area_name]
+    raw_out = model.outputs[area_name][sess]
+    readout = _readout_to_rate_numpy(area, raw_out, output_dist)
+    merged = _merged_area_predictive_means(
+        model, area_name, sess=sess, output_dist=output_dist
+    )
+
+    predictor: np.ndarray | None = None
+    hn_idx = _held_out_neuron_indices(model, area_name, sess)
+    preds_dict = getattr(model, "preds", None)
+    if (
+        hn_idx.size
+        and preds_dict is not None
+        and area_name in preds_dict
+        and sess < len(preds_dict[area_name])
+    ):
+        raw_pr = preds_dict[area_name][sess]
+        if raw_pr.shape[-1]:
+            predictor = _readout_to_rate_numpy(area, raw_pr, output_dist)
+
+    return readout, predictor, merged
+
+
+def _write_area_activity_datasets(
+    g: h5py.Group,
+    *,
+    model: Any,
+    trial_idx: np.ndarray,
+    output_dist: OutputDist,
+    sess: int = SESSION,
+) -> None:
+    """Write merged activity, readout, predictor, and held-out index metadata."""
+    for area_name in model.area_names:
+        readout, predictor, merged = _area_export_arrays(
+            model, area_name, sess=sess, output_dist=output_dist
+        )
+
+        readout_aligned = reorder_predictions_to_input_trials(readout, trial_idx)
+        merged_aligned = reorder_predictions_to_input_trials(merged, trial_idx)
+
+        ds = g.create_dataset(f"area-{area_name}", data=merged_aligned)
+        ds.attrs["type"] = "hidden_state"
+        if output_dist == "poisson":
+            ds.attrs["representation"] = "mrlfads_poisson_rate"
+        else:
+            ds.attrs["representation"] = "mrlfads_gaussian_mean"
+
+        ds_ro = g.create_dataset(f"area-{area_name}-readout", data=readout_aligned)
+        ds_ro.attrs["type"] = "hidden_state"
+        ds_ro.attrs["head"] = "readout"
+        ds_ro.attrs["description"] = (
+            "Main readout (outputs) for all neurons — evaluate cross-subset generalization."
+        )
+
+        if predictor is not None:
+            predictor_aligned = reorder_predictions_to_input_trials(predictor, trial_idx)
+            ds_pr = g.create_dataset(
+                f"area-{area_name}-predictor-held-out", data=predictor_aligned
+            )
+            ds_pr.attrs["type"] = "hidden_state"
+            ds_pr.attrs["head"] = "predictor"
+            ds_pr.attrs["description"] = (
+                "Predictor head (preds) for held-out neurons only."
+            )
+
+    for area_name in model.area_names:
+        ho = _held_out_neuron_indices(model, area_name, sess)
+        ds = g.create_dataset(f"meta-held-out-neuron-indices-area-{area_name}", data=ho)
+        ds.attrs["role"] = "held_out_train_time"
+        ds.attrs["description"] = (
+            "Subset of neuron indices held out during MR-LFADS training (hn_indices)."
+        )
+
+
+def _write_factor_slice_metadata(g: h5py.Group, *, model: Any) -> None:
+    """Write ``meta-factor-slice-area-*`` before ``region-factors`` dataset."""
+    fac_offset = 0
+    for area_name in model.area_names:
+        fac_dim = int(model.areas[area_name].hparams.fac_dim)
+        ds = g.create_dataset(
+            f"meta-factor-slice-area-{area_name}",
+            data=np.array([fac_offset, fac_offset + fac_dim], dtype=np.int64),
+        )
+        ds.attrs["description"] = (
+            f"Half-open slice [start, end) into region-factors for area {area_name}."
+        )
+        fac_offset += fac_dim
 
 
 def _region_factors_from_model(model: Any) -> np.ndarray:
@@ -258,60 +370,13 @@ def write_mrlfads_area_activity_h5(
     with h5py.File(out_path, "w") as dst:
         g = dst.create_group("0")
 
-        # Write each area's predictions (held-out channels from ``preds``, rest from ``outputs``)
-        for area_name in model.area_names:
-            area = model.areas[area_name]
-            raw_out = model.outputs[area_name][0]
-            readout = reorder_predictions_to_input_trials(
-                _readout_to_rate_numpy(area, raw_out, output_dist), trial_idx
-            )
-            pred_mean = _merged_area_predictive_means(
-                model, area_name, sess=0, output_dist=output_dist
-            )
-            aligned = reorder_predictions_to_input_trials(pred_mean, trial_idx)
-            ds = g.create_dataset(f"area-{area_name}", data=aligned)
-            ds.attrs["type"] = "hidden_state"
-            if output_dist == "poisson":
-                ds.attrs["representation"] = "mrlfads_poisson_rate"
-            else:
-                ds.attrs["representation"] = "mrlfads_gaussian_mean"
-
-            ds_ro = g.create_dataset(f"area-{area_name}-readout", data=readout)
-            ds_ro.attrs["type"] = "hidden_state"
-            ds_ro.attrs["head"] = "readout"
-            ds_ro.attrs["description"] = (
-                "Main readout (outputs) for all neurons — evaluate cross-subset generalization."
-            )
-
-            hn_idx = _held_out_neuron_indices(model, area_name, sess=0)
-            preds_dict = getattr(model, "preds", None)
-            if (
-                hn_idx.size
-                and preds_dict is not None
-                and area_name in preds_dict
-                and len(preds_dict[area_name]) > 0
-            ):
-                raw_pr = preds_dict[area_name][0]
-                if raw_pr.shape[-1]:
-                    predictor = reorder_predictions_to_input_trials(
-                        _readout_to_rate_numpy(area, raw_pr, output_dist), trial_idx
-                    )
-                    ds_pr = g.create_dataset(
-                        f"area-{area_name}-predictor-held-out", data=predictor
-                    )
-                    ds_pr.attrs["type"] = "hidden_state"
-                    ds_pr.attrs["head"] = "predictor"
-                    ds_pr.attrs["description"] = (
-                        "Predictor head (preds) for held-out neurons only."
-                    )
-
-        # Held-out neuron indices (MR-LFADS ``hn_indices``) — indices along the neuron dim of ``area-*``.
-        for area_name in model.area_names:
-            ho = _held_out_neuron_indices(model, area_name, sess=0)
-            ds = g.create_dataset(f"meta-held-out-neuron-indices-area-{area_name}", data=ho)
-            ds.attrs["role"] = "held_out_train_time"
-            ds.attrs["description"] = "Subset of neuron indices held out during MR-LFADS training (hn_indices)."
-
+        _write_area_activity_datasets(
+            g,
+            model=model,
+            trial_idx=trial_idx,
+            output_dist=output_dist,
+            sess=SESSION,
+        )
 
         has_comm = _has_cross_area_communication(model)
 
@@ -334,17 +399,7 @@ def write_mrlfads_area_activity_h5(
             _region_factors_from_model(model), trial_idx
         )
 
-        fac_offset = 0
-        for area_name in model.area_names:
-            fac_dim = int(model.areas[area_name].hparams.fac_dim)
-            ds = g.create_dataset(
-                f"meta-factor-slice-area-{area_name}",
-                data=np.array([fac_offset, fac_offset + fac_dim], dtype=np.int64),
-            )
-            ds.attrs["description"] = (
-                f"Half-open slice [start, end) into region-factors for area {area_name}."
-            )
-            fac_offset += fac_dim
+        _write_factor_slice_metadata(g, model=model)
 
         if experiment_type == "memory_network":
             if has_comm:
