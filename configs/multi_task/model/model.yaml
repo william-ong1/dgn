@@ -6,6 +6,7 @@ diagram: null
 graph_kwargs:
   perc_conns: 0.67
   shortest: 3
+  seed: null
 
 lr_init: 5e-4
 l2_scale: 0.0
