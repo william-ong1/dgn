@@ -664,6 +664,8 @@ class MultiTaskNet(DGNBase):
         l1_start_epoch: int = 150,
         l1_increase_epoch: int = 150,
         l1_scale: float = 0.0,
+        l2_scale: float = 0.0,
+        l2_comm_scale: float = 0.0,
         smooth_start_epoch: int = 100,
         smooth_increase_epoch: int = 200,
         smooth_scale: float = 0.0,
@@ -678,8 +680,8 @@ class MultiTaskNet(DGNBase):
             stim_input_areas: Which area receives fix, stim1, stim2 (and optionally task).
             sacc_output_areas: Areas included in the saccade mask; unset becomes empty.
             sacc_scale: Weight on fixation / saccade loss.
-            graph_kwargs: Options for depreciated random graph construction
-                (``perc_conns``, ``shortest``).
+            graph_kwargs: Options for random graph construction when ``diagram``
+                is empty (``perc_conns``, ``shortest``, optional ``seed``).
 
             delay: Delay between messages between areas.
             hidden_size: Hidden units per area.
@@ -703,6 +705,8 @@ class MultiTaskNet(DGNBase):
             l1_start_epoch: Start epoch for L1 ramp on communication weights.
             l1_increase_epoch: Ramp length for L1.
             l1_scale: L1 strength.
+            l2_scale: L2 on non-communication parameters (RNN, readout, etc.).
+            l2_comm_scale: L2 on inter-area communication weights only.
             smooth_start_epoch: Start epoch for smoothness loss ramp.
             smooth_increase_epoch: Ramp length for smoothness loss.
             smooth_scale: Smoothness loss scale.
@@ -901,21 +905,23 @@ class MultiTaskNet(DGNBase):
         )
         loss_base = torch.mean(loss_base * base_mask)
 
-        # L1 on communication weights
-        l1_ramp = self._compute_ramp(hps.l1_start_epoch, hps.l1_increase_epoch)
-        linear_weights = []
-        for area_name, area in self.areas.items():
-            start, end = hps.successor_list[area_name]
-            for layer in area.output.model:
-                if isinstance(layer, nn.Linear):
-                    linear_weights.append((layer.weight[start:end], hps.l1_scale))
+        # L1 / L2 on communication vs. all other weights (disjoint slices)
+        comm_kernels, other_kernels = self._comm_and_other_kernels()
 
+        l1_ramp = self._compute_ramp(hps.l1_start_epoch, hps.l1_increase_epoch)
         loss_l1, kernel_size = 0.0, 0
-        for kernel, weight in linear_weights:
-            if weight > 0:
-                loss_l1 += weight * torch.norm(kernel, 1)
+        if hps.l1_scale > 0:
+            for kernel in comm_kernels:
+                if kernel.ndim != 2:
+                    continue
+                loss_l1 += hps.l1_scale * torch.norm(kernel, 1)
                 kernel_size += kernel.numel()
-        loss_l1 /= kernel_size + 1e-8
+            loss_l1 /= kernel_size + 1e-8
+
+        loss_l2 = self._mean_sq(other_kernels) * hps.l2_scale if hps.l2_scale > 0 else 0.0
+        loss_l2_comm = (
+            self._mean_sq(comm_kernels) * hps.l2_comm_scale if hps.l2_comm_scale > 0 else 0.0
+        )
 
         # Smoothness loss
         smooth_ramp = self._compute_ramp(hps.smooth_start_epoch, hps.smooth_increase_epoch)
@@ -943,7 +949,9 @@ class MultiTaskNet(DGNBase):
             + loss_base
             + loss_angle * angle_ramp
             + loss_l1 * l1_ramp
-            + loss_smooth * smooth_ramp 
+            + loss_l2
+            + loss_l2_comm
+            + loss_smooth * smooth_ramp
         )
         metrics = {
             f"{step_type}/loss": loss,
@@ -952,6 +960,8 @@ class MultiTaskNet(DGNBase):
             f"{step_type}/loss_base": loss_base,
             f"{step_type}/loss_angle": loss_angle,
             f"{step_type}/loss_l1": loss_l1,
+            f"{step_type}/loss_l2": loss_l2,
+            f"{step_type}/loss_l2_comm": loss_l2_comm,
             f"{step_type}/loss_smooth": loss_smooth,
         }
         for task_name, acc_val in per_task_acc.items():
@@ -1006,29 +1016,50 @@ class MultiTaskNet(DGNBase):
         }
 
     def _build_graph(self):
-        """Depreciated random graph construction when no diagram is provided."""
+        """Sample a random inter-area connectome when ``diagram`` is empty.
+
+        ``stim_input_areas`` is left unchanged. Requires ``graph_kwargs``:
+            perc_conns: fraction of directed area-to-area edges to keep
+            shortest: max path length from each stim area to A{num_areas-1}
+            seed: optional; if unset, uses the process RNG (``--seed``)
+        The realized edge list is written back to ``hparams.diagram``.
+        """
         hps = self.hparams
+        if "perc_conns" not in hps.graph_kwargs or "shortest" not in hps.graph_kwargs:
+            raise ValueError(
+                "Random diagrams need graph_kwargs.perc_conns and graph_kwargs.shortest "
+                "(and model.diagram=null)."
+            )
+
         self.area_names = [f"A{ia}" for ia in range(hps.num_areas)]
         all_conns = list(permutations(self.area_names, 2))
+        n_keep = int(hps.graph_kwargs["perc_conns"] * len(all_conns))
+        max_len = int(hps.graph_kwargs["shortest"])
+        stim_areas = [a for a in dict.fromkeys(hps.stim_input_areas) if str(a).startswith("A")]
+        rng = (
+            random.Random(int(hps.graph_kwargs["seed"]))
+            if hps.graph_kwargs.get("seed") is not None
+            else random
+        )
 
-        graph_seed = hps.graph_kwargs.get("seed")
-        rng = random.Random(int(graph_seed)) if graph_seed is not None else random
-
-        stop_search, iters = False, 0
+        stop_search, iters, edges = False, 0, []
         while (not stop_search) and (iters <= 500):
             rng.shuffle(all_conns)
-            edges = all_conns[:int(hps.graph_kwargs["perc_conns"] * len(all_conns))]
+            edges = all_conns[:n_keep]
 
             stop_search = True
             graph = nx.DiGraph(edges)
             graph.add_nodes_from(self.area_names)
-            for inp_area_name in hps.stim_input_areas:
-                shortest = nx.shortest_path(
-                    graph, source=inp_area_name, target=f"A{hps.num_areas - 1}"
-                )
-                if len(shortest) - 1 > hps.graph_kwargs["shortest"]:
-                    stop_search = False
-                    break
+            try:
+                for inp_area_name in stim_areas:
+                    shortest = nx.shortest_path(
+                        graph, source=inp_area_name, target=f"A{hps.num_areas - 1}"
+                    )
+                    if len(shortest) - 1 > max_len:
+                        stop_search = False
+                        break
+            except nx.NetworkXNoPath:
+                stop_search = False
             iters += 1
 
             if len(self.area_names) <= 3:
@@ -1037,11 +1068,13 @@ class MultiTaskNet(DGNBase):
         if not stop_search:
             raise RuntimeError("Graph search exceeded max iters.")
 
-        wedges = [(source, target, 0) for source, target in edges]
-        wedges.append((f"A{hps.num_areas - 1}", f"A{hps.num_areas}", 1))
+        wedges = [[source, target, 0] for source, target in edges]
+        for itask in range(hps.num_tasks):
+            wedges.append([f"A{hps.num_areas - 1}", f"A{hps.num_areas}", itask + 1])
 
-        graph = nx.DiGraph()
+        graph = nx.MultiDiGraph()
         graph.add_weighted_edges_from(wedges)
+        hps.diagram = wedges
         self.edges = wedges
         self.G = graph
         return graph
@@ -1200,3 +1233,50 @@ class MultiTaskNet(DGNBase):
     def _compute_ramp(self, start, increase):
         ramp = (self.current_epoch + 1 - start) / (increase + 1)
         return torch.clamp(torch.tensor(ramp), 0, 1)
+
+    def _comm_and_other_kernels(self):
+        """Disjoint communication vs. non-communication parameter slices.
+
+        Communication is the inter-area message rows of each area's output
+        linear (same slice as L1). All other parameters, including fixation
+        and task-output rows of those linears, are the weight-L2 group.
+        ``end == -1`` means no task-output block, so comm is ``weight[start:]``.
+        """
+        hps = self.hparams
+        comm_kernels = []
+        other_kernels = []
+        mixed_ids = set()
+
+        for area_name, area in self.areas.items():
+            start, end = hps.successor_list[area_name]
+            w_end = None if end == -1 else end
+            for layer in area.output.model:
+                if not isinstance(layer, nn.Linear):
+                    continue
+                mixed_ids.add(id(layer.weight))
+                comm_kernels.append(layer.weight[start:w_end])
+                if start > 0:
+                    other_kernels.append(layer.weight[:start])
+                if w_end is not None:
+                    other_kernels.append(layer.weight[w_end:])
+                if layer.bias is not None:
+                    mixed_ids.add(id(layer.bias))
+                    comm_kernels.append(layer.bias[start:w_end])
+                    if start > 0:
+                        other_kernels.append(layer.bias[:start])
+                    if w_end is not None:
+                        other_kernels.append(layer.bias[w_end:])
+
+        for param in self.parameters():
+            if id(param) not in mixed_ids:
+                other_kernels.append(param)
+        return comm_kernels, other_kernels
+
+    @staticmethod
+    def _mean_sq(kernels):
+        total = 0.0
+        n = 0
+        for kernel in kernels:
+            total = total + kernel.pow(2).sum()
+            n += kernel.numel()
+        return total / (n + 1e-8)
