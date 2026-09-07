@@ -125,8 +125,13 @@ def print_summary(df: pd.DataFrame) -> None:
     if df.empty:
         return
 
+    n_l2 = int(df["l2_scale"].nunique(dropna=True))
+    n_l2c = int(df["l2_comm_scale"].nunique(dropna=True))
+    swept = "l2_comm_scale" if n_l2c > n_l2 else "l2_scale"
+
     show = [
         "l2_scale",
+        "l2_comm_scale",
         "gseed",
         "task",
         "valid_acc_final",
@@ -136,25 +141,25 @@ def print_summary(df: pd.DataFrame) -> None:
         "valid_loss_best",
         "train_acc_final",
     ]
-    per_run = df.sort_values(["l2_scale", "gseed", "task"])
+    per_run = df.sort_values([swept, "gseed", "task"])
     print("\n=== Per-run accuracy ===", flush=True)
     with pd.option_context("display.max_columns", 20, "display.width", 160, "display.float_format", "{:.4g}".format):
         print(per_run[show].to_string(index=False), flush=True)
 
-    print("\n=== Mean valid_acc_final by l2_scale × gseed ===", flush=True)
-    piv_final = df.pivot_table(index="l2_scale", columns="gseed", values="valid_acc_final", aggfunc="mean")
+    print(f"\n=== Mean valid_acc_final by {swept} × gseed ===", flush=True)
+    piv_final = df.pivot_table(index=swept, columns="gseed", values="valid_acc_final", aggfunc="mean")
     piv_final["mean"] = piv_final.mean(axis=1)
-    with pd.option_context("display.width", 120, "display.float_format", "{:.4f}".format):
+    with pd.option_context("display.width", 120, "display.float_format", "{:.4g}".format):
         print(piv_final.to_string(), flush=True)
 
-    print("\n=== Mean valid_acc_best by l2_scale × gseed ===", flush=True)
-    piv_best = df.pivot_table(index="l2_scale", columns="gseed", values="valid_acc_best", aggfunc="mean")
+    print(f"\n=== Mean valid_acc_best by {swept} × gseed ===", flush=True)
+    piv_best = df.pivot_table(index=swept, columns="gseed", values="valid_acc_best", aggfunc="mean")
     piv_best["mean"] = piv_best.mean(axis=1)
-    with pd.option_context("display.width", 120, "display.float_format", "{:.4f}".format):
+    with pd.option_context("display.width", 120, "display.float_format", "{:.4g}".format):
         print(piv_best.to_string(), flush=True)
 
-    by_l2 = (
-        df.groupby("l2_scale", as_index=False)
+    by_swept = (
+        df.groupby(swept, as_index=False)
         .agg(
             n_runs=("run_name", "nunique"),
             valid_acc_final_mean=("valid_acc_final", "mean"),
@@ -164,12 +169,12 @@ def print_summary(df: pd.DataFrame) -> None:
         .sort_values("valid_acc_final_mean", ascending=False)
     )
     print("\n=== Ranked by mean valid_acc_final (across graph seeds) ===", flush=True)
-    with pd.option_context("display.width", 120, "display.float_format", "{:.4f}".format):
-        print(by_l2.to_string(index=False), flush=True)
+    with pd.option_context("display.width", 120, "display.float_format", "{:.4g}".format):
+        print(by_swept.to_string(index=False), flush=True)
 
-    best_row = by_l2.iloc[0]
+    best_row = by_swept.iloc[0]
     print(
-        f"\nBest l2_scale by mean valid_acc_final: {best_row['l2_scale']:.4g} "
+        f"\nBest {swept} by mean valid_acc_final: {best_row[swept]:.4g} "
         f"(mean={best_row['valid_acc_final_mean']:.4f}, n={int(best_row['n_runs'])})",
         flush=True,
     )
