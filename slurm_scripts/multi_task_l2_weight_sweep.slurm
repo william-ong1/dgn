@@ -12,6 +12,7 @@
 #SBATCH --error=/mmfs1/gscratch/golub/wong2/slurm_logs/mt_l2_w_%j.err
 
 # Sweep model.l2_scale with model.l2_comm_scale=0 (phase 1).
+# L2 ramps like noise: scale factor l2_init -> 1 over l2_increase epochs.
 # All runs launched in parallel on one GPU. Same --seed so the random diagram is shared.
 
 set -euo pipefail
@@ -24,6 +25,9 @@ RUNS_ROOT=/mmfs1/gscratch/golub/wong2/runs/multi_task/l2_weight_runs
 SEED=0
 TASK=rt_go
 L2S=(0 1e-5 1e-4 1e-3 1e-2)
+L2_START=0
+L2_INCREASE=200
+L2_INIT=0.3
 STAMP="$(date +%y%m%d%H%M)"
 
 mkdir -p "${RUNS_ROOT}"
@@ -32,10 +36,11 @@ mkdir -p /mmfs1/gscratch/golub/wong2/slurm_logs
 cd "${REPO}"
 
 echo "Job ${SLURM_JOB_ID}: launching ${#L2S[@]} l2_scale runs in parallel on 1 GPU"
+echo "L2 ramp: start=${L2_START} increase=${L2_INCREASE} init=${L2_INIT}"
 
 i=0
 for L2 in "${L2S[@]}"; do
-  RUN_NAME="multi_task_${TASK}_l2${L2}_l2c0_gseed0_seed${SEED}_id${STAMP}"
+  RUN_NAME="multi_task_${TASK}_l2${L2}_l2c0_l2inc${L2_INCREASE}_gseed0_seed${SEED}_id${STAMP}"
   RUN_DIR="${RUNS_ROOT}/${RUN_NAME}"
 
   echo "Launching ${TASK} l2_scale=${L2} l2_comm_scale=0 -> ${RUN_DIR}"
@@ -44,6 +49,9 @@ for L2 in "${L2S[@]}"; do
     --run_name "${RUN_DIR}" \
     --override "datamodule.task_names=[${TASK}]" \
     --override "model.l2_scale=${L2}" \
+    --override "model.l2_start=${L2_START}" \
+    --override "model.l2_increase=${L2_INCREASE}" \
+    --override "model.l2_init=${L2_INIT}" \
     --override "model.l2_comm_scale=0" \
     --override "model.graph_kwargs.seed=0" &
 
