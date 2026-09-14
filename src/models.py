@@ -665,7 +665,13 @@ class MultiTaskNet(DGNBase):
         l1_increase_epoch: int = 150,
         l1_scale: float = 0.0,
         l2_scale: float = 0.0,
+        l2_start: int = 0,
+        l2_increase: int = 0,
+        l2_init: float = 0.0,
         l2_comm_scale: float = 0.0,
+        l2_comm_start: int = 0,
+        l2_comm_increase: int = 0,
+        l2_comm_init: float = 0.0,
         smooth_start_epoch: int = 100,
         smooth_increase_epoch: int = 200,
         smooth_scale: float = 0.0,
@@ -706,7 +712,13 @@ class MultiTaskNet(DGNBase):
             l1_increase_epoch: Ramp length for L1.
             l1_scale: L1 strength.
             l2_scale: L2 on non-communication parameters (RNN, readout, etc.).
+            l2_start: Epoch to begin ramping L2 (same schedule as noise).
+            l2_increase: Epochs over which to ramp L2 from ``l2_init`` to 1.
+            l2_init: Starting scale factor for the L2 ramp.
             l2_comm_scale: L2 on inter-area communication weights only.
+            l2_comm_start: Epoch to begin ramping communication L2.
+            l2_comm_increase: Epochs over which to ramp communication L2.
+            l2_comm_init: Starting scale factor for the communication L2 ramp.
             smooth_start_epoch: Start epoch for smoothness loss ramp.
             smooth_increase_epoch: Ramp length for smoothness loss.
             smooth_scale: Smoothness loss scale.
@@ -918,6 +930,10 @@ class MultiTaskNet(DGNBase):
                 kernel_size += kernel.numel()
             loss_l1 /= kernel_size + 1e-8
 
+        l2_ramp = self._compute_scale_ramp(hps.l2_start, hps.l2_increase, hps.l2_init)
+        l2_comm_ramp = self._compute_scale_ramp(
+            hps.l2_comm_start, hps.l2_comm_increase, hps.l2_comm_init
+        )
         loss_l2 = self._mean_sq(other_kernels) * hps.l2_scale if hps.l2_scale > 0 else 0.0
         loss_l2_comm = (
             self._mean_sq(comm_kernels) * hps.l2_comm_scale if hps.l2_comm_scale > 0 else 0.0
@@ -949,8 +965,8 @@ class MultiTaskNet(DGNBase):
             + loss_base
             + loss_angle * angle_ramp
             + loss_l1 * l1_ramp
-            + loss_l2
-            + loss_l2_comm
+            + loss_l2 * l2_ramp
+            + loss_l2_comm * l2_comm_ramp
             + loss_smooth * smooth_ramp
         )
         metrics = {
@@ -1233,6 +1249,16 @@ class MultiTaskNet(DGNBase):
     def _compute_ramp(self, start, increase):
         ramp = (self.current_epoch + 1 - start) / (increase + 1)
         return torch.clamp(torch.tensor(ramp), 0, 1)
+
+    def _compute_scale_ramp(self, start, increase, init=0.0):
+        """Epoch curriculum matching VariableNoise: ``init`` -> 1 over ``increase``.
+
+        If ``increase <= 0``, returns 1 so the term is applied at full scale.
+        """
+        if increase <= 0:
+            return torch.tensor(1.0)
+        ramp = self._compute_ramp(start, increase)
+        return init + (1.0 - init) * ramp
 
     def _comm_and_other_kernels(self):
         """Disjoint communication vs. non-communication parameter slices.
