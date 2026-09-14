@@ -43,12 +43,13 @@ callbacks:
     logging_interval: epoch
 
   early_stopping:
-    _target_: pytorch_lightning.callbacks.EarlyStopping
+    _target_: callbacks.DelayedEarlyStopping
     monitor: valid/loss
     mode: min
     patience: 50
     min_delta: 0
     check_finite: true
+    delay_epochs: ${model.noise_increase}
 
 logger:
   tensorboard_logger:

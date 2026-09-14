@@ -12,7 +12,12 @@ lr_init: 5e-4
 l2_scale: 0.0
 l2_comm_scale: 0.0
 hidden_size: 64
+
 noise: 0.1
+noise_start: 0
+noise_increase: 200
+noise_init: 0.3
+
 num_areas: 4
 num_channels: 8
 rnn_type: rnncell

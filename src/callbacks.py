@@ -17,6 +17,23 @@ from utils.common_utils import area_activity_to_poisson_counts, sigmoid, one_hot
 SAVE_DIR = "./graphs/"
 
 
+class DelayedEarlyStopping(pl.callbacks.EarlyStopping):
+    """Early stopping that ignores the monitor until ``delay_epochs``.
+
+    Patience does not tick during the delay, so a noise / loss curriculum can
+    finish before stopping decisions begin.
+    """
+
+    def __init__(self, delay_epochs: int = 0, **kwargs):
+        super().__init__(**kwargs)
+        self.delay_epochs = delay_epochs
+
+    def _run_early_stopping_check(self, trainer):
+        if trainer.current_epoch < self.delay_epochs:
+            return
+        return super()._run_early_stopping_check(trainer)
+
+
 class OnEpochStartCalls(pl.Callback):
     """
     Custom callbacks at the start of train/validation epochs.
