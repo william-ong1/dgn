@@ -1,0 +1,59 @@
+defaults:
+  - model: model
+  - datamodule: datamodule
+  - callbacks: callbacks
+  - _self_
+
+seed: 0
+run_dir: null
+paths:
+  resultpath: .
+
+trainer:
+  _target_: pytorch_lightning.Trainer
+  gradient_clip_val: 200
+  max_epochs: 2000
+  min_epochs: 600
+  log_every_n_steps: 20
+
+callbacks:
+  model_checkpoints:
+    _target_: pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: null
+    save_top_k: -1
+    every_n_epochs: 20
+    dirpath: lightning_checkpoints
+    save_last: true
+    verbose: false
+    auto_insert_metric_name: false
+
+  best_checkpoint:
+    _target_: pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: valid/loss
+    mode: min
+    save_top_k: 1
+    dirpath: lightning_checkpoints
+    filename: "best"
+    save_last: false
+    verbose: false
+    auto_insert_metric_name: false
+
+  learning_rate_monitor:
+    _target_: pytorch_lightning.callbacks.LearningRateMonitor
+    logging_interval: epoch
+
+  early_stopping:
+    _target_: callbacks.DelayedEarlyStopping
+    monitor: valid/loss
+    mode: min
+    patience: 50
+    min_delta: 0
+    check_finite: true
+    delay_epochs: ${model.noise_increase}
+
+logger:
+  tensorboard_logger:
+    _target_: pytorch_lightning.loggers.TensorBoardLogger
+    save_dir: "."
+    version: ""
+    name: ""

@@ -1,0 +1,15 @@
+_target_: datamodules.MultiTask
+
+batch_total: 2048
+time_total: 200
+batch_size: 32
+noise_sig: 0.01
+
+p_split:
+  - 0.5
+  - 0.5
+
+task_names:
+  - rt_go
+
+resultpath: ${paths.resultpath}
