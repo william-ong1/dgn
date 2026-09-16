@@ -6,6 +6,7 @@ Reads TensorBoard tags ``train/acc_<task>`` and ``valid/acc_<task>`` from run
 dirs named like:
 
     multi_task_rt_go_l21e-4_l2c0_gseed1_seed0_id2608272237
+    multi_task_rt_go_l21e-4_l2c1e-5_l2inc200_l2cinc200_gseed0_seed0_id2609150053
 
 Prints one row per run, then a pivot of mean valid accuracy by l2_scale × gseed
 so you can pick the best regularizer.
@@ -24,23 +25,33 @@ from pathlib import Path
 import pandas as pd
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
-# multi_task_<task>_l2<scale>_l2c<comm>_gseed<g>_seed<s>_id...
+# multi_task_<task>[_h<hidden>]_l2<scale>_l2c<comm>[_l2incN][_l2cincN]_gseed<g>_seed<s>_id...
 RUN_RE = re.compile(
-    r"^multi_task_(?P<task>[a-z0-9_]+)"
+    r"^multi_task_(?P<task>[a-z0-9_]+?)"
+    r"(?:_h(?P<hidden>\d+))?"
     r"_l2(?P<l2>[0-9.eE+-]+)"
     r"_l2c(?P<l2c>[0-9.eE+-]+)"
+    r"(?:_(?:l2inc|l2cinc)\d+)*"
     r"_gseed(?P<gseed>\d+)"
     r"_seed(?P<seed>\d+)"
 )
+DEFAULT_HIDDEN_SIZE = 64
 
 
 def parse_run_name(name: str) -> dict:
     m = RUN_RE.search(name)
     if not m:
-        return dict(task="unknown", l2_scale=float("nan"), l2_comm_scale=float("nan"),
-                    gseed=float("nan"), seed=float("nan"))
+        return dict(
+            task="unknown",
+            hidden_size=DEFAULT_HIDDEN_SIZE,
+            l2_scale=float("nan"),
+            l2_comm_scale=float("nan"),
+            gseed=float("nan"),
+            seed=float("nan"),
+        )
     return dict(
         task=m.group("task"),
+        hidden_size=int(m.group("hidden")) if m.group("hidden") else DEFAULT_HIDDEN_SIZE,
         l2_scale=float(m.group("l2")),
         l2_comm_scale=float(m.group("l2c")),
         gseed=int(m.group("gseed")),
@@ -102,6 +113,7 @@ def collect_run(run_dir: Path) -> list[dict]:
             dict(
                 run_name=run_dir.name,
                 task=task_name,
+                hidden_size=meta["hidden_size"],
                 l2_scale=meta["l2_scale"],
                 l2_comm_scale=meta["l2_comm_scale"],
                 gseed=meta["gseed"],
@@ -130,6 +142,7 @@ def print_summary(df: pd.DataFrame) -> None:
     swept = "l2_comm_scale" if n_l2c > n_l2 else "l2_scale"
 
     show = [
+        "hidden_size",
         "l2_scale",
         "l2_comm_scale",
         "gseed",
@@ -141,43 +154,58 @@ def print_summary(df: pd.DataFrame) -> None:
         "valid_loss_best",
         "train_acc_final",
     ]
-    per_run = df.sort_values([swept, "gseed", "task"])
+    per_run = df.sort_values(["hidden_size", swept, "gseed", "task"])
     print("\n=== Per-run accuracy ===", flush=True)
     with pd.option_context("display.max_columns", 20, "display.width", 160, "display.float_format", "{:.4g}".format):
         print(per_run[show].to_string(index=False), flush=True)
 
-    print(f"\n=== Mean valid_acc_final by {swept} × gseed ===", flush=True)
-    piv_final = df.pivot_table(index=swept, columns="gseed", values="valid_acc_final", aggfunc="mean")
+    print(f"\n=== Mean valid_acc_final by hidden_size × {swept} × gseed ===", flush=True)
+    piv_final = df.pivot_table(
+        index=["hidden_size", swept], columns="gseed", values="valid_acc_final", aggfunc="mean"
+    )
     piv_final["mean"] = piv_final.mean(axis=1)
     with pd.option_context("display.width", 120, "display.float_format", "{:.4g}".format):
         print(piv_final.to_string(), flush=True)
 
-    print(f"\n=== Mean valid_acc_best by {swept} × gseed ===", flush=True)
-    piv_best = df.pivot_table(index=swept, columns="gseed", values="valid_acc_best", aggfunc="mean")
+    print(f"\n=== Mean valid_acc_best by hidden_size × {swept} × gseed ===", flush=True)
+    piv_best = df.pivot_table(
+        index=["hidden_size", swept], columns="gseed", values="valid_acc_best", aggfunc="mean"
+    )
     piv_best["mean"] = piv_best.mean(axis=1)
     with pd.option_context("display.width", 120, "display.float_format", "{:.4g}".format):
         print(piv_best.to_string(), flush=True)
 
     by_swept = (
-        df.groupby(swept, as_index=False)
+        df.groupby(["hidden_size", swept], as_index=False)
         .agg(
             n_runs=("run_name", "nunique"),
             valid_acc_final_mean=("valid_acc_final", "mean"),
             valid_acc_best_mean=("valid_acc_best", "mean"),
             valid_loss_final_mean=("valid_loss_final", "mean"),
         )
-        .sort_values("valid_acc_final_mean", ascending=False)
+        .sort_values(["hidden_size", "valid_acc_final_mean"], ascending=[True, False])
     )
     print("\n=== Ranked by mean valid_acc_final (across graph seeds) ===", flush=True)
     with pd.option_context("display.width", 120, "display.float_format", "{:.4g}".format):
         print(by_swept.to_string(index=False), flush=True)
 
-    best_row = by_swept.iloc[0]
-    print(
-        f"\nBest {swept} by mean valid_acc_final: {best_row[swept]:.4g} "
-        f"(mean={best_row['valid_acc_final_mean']:.4f}, n={int(best_row['n_runs'])})",
-        flush=True,
-    )
+    if by_swept.empty:
+        print(
+            f"\nNo parsed {swept} values to rank (check run-name pattern).",
+            flush=True,
+        )
+        return
+
+    print(f"\nBest {swept} by mean valid_acc_final (per hidden_size):", flush=True)
+    for hidden, grp in by_swept.groupby("hidden_size", sort=True):
+        if grp.empty:
+            continue
+        best_row = grp.iloc[0]
+        print(
+            f"  h={int(hidden)}: {best_row[swept]:.4g} "
+            f"(mean={best_row['valid_acc_final_mean']:.4f}, n={int(best_row['n_runs'])})",
+            flush=True,
+        )
 
 
 def main() -> None:
@@ -227,7 +255,7 @@ def main() -> None:
         meta = parse_run_name(run_dir.name)
         print(
             f"[{i:>3}/{len(run_dirs)}] {run_dir.name}  "
-            f"(l2={meta['l2_scale']}, gseed={meta['gseed']})",
+            f"(h={meta['hidden_size']}, l2={meta['l2_scale']}, l2c={meta['l2_comm_scale']}, gseed={meta['gseed']})",
             flush=True,
         )
         try:
