@@ -1036,9 +1036,11 @@ class MultiTaskNet(DGNBase):
 
         ``stim_input_areas`` is left unchanged. Requires ``graph_kwargs``:
             perc_conns: fraction of directed area-to-area edges to keep
-            shortest: max path length from each stim area to A{num_areas-1}
+            shortest: max path length from every area to A{num_areas-1}
             seed: optional; if unset, uses the process RNG (``--seed``)
-        The realized edge list is written back to ``hparams.diagram``.
+        A draw is rejected unless every area has in-degree and out-degree
+        at least 1, and every area reaches the output in at most ``shortest``
+        hops. The realized edge list is written back to ``hparams.diagram``.
         """
         hps = self.hparams
         if "perc_conns" not in hps.graph_kwargs or "shortest" not in hps.graph_kwargs:
@@ -1051,7 +1053,7 @@ class MultiTaskNet(DGNBase):
         all_conns = list(permutations(self.area_names, 2))
         n_keep = int(hps.graph_kwargs["perc_conns"] * len(all_conns))
         max_len = int(hps.graph_kwargs["shortest"])
-        stim_areas = [a for a in dict.fromkeys(hps.stim_input_areas) if str(a).startswith("A")]
+        out_area = f"A{hps.num_areas - 1}"
         rng = (
             random.Random(int(hps.graph_kwargs["seed"]))
             if hps.graph_kwargs.get("seed") is not None
@@ -1066,20 +1068,22 @@ class MultiTaskNet(DGNBase):
             stop_search = True
             graph = nx.DiGraph(edges)
             graph.add_nodes_from(self.area_names)
-            try:
-                for inp_area_name in stim_areas:
-                    shortest = nx.shortest_path(
-                        graph, source=inp_area_name, target=f"A{hps.num_areas - 1}"
-                    )
-                    if len(shortest) - 1 > max_len:
-                        stop_search = False
-                        break
-            except nx.NetworkXNoPath:
-                stop_search = False
+            for area_name in self.area_names:
+                if graph.in_degree(area_name) == 0 or graph.out_degree(area_name) == 0:
+                    stop_search = False
+                    break
+            if stop_search:
+                try:
+                    for area_name in self.area_names:
+                        if area_name == out_area:
+                            continue
+                        path = nx.shortest_path(graph, source=area_name, target=out_area)
+                        if len(path) - 1 > max_len:
+                            stop_search = False
+                            break
+                except nx.NetworkXNoPath:
+                    stop_search = False
             iters += 1
-
-            if len(self.area_names) <= 3:
-                stop_search = True
 
         if not stop_search:
             raise RuntimeError("Graph search exceeded max iters.")

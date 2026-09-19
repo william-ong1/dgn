@@ -4,19 +4,19 @@ angle_scale: 1
 delay: 5
 diagram: null
 graph_kwargs:
-  perc_conns: 0.67
-  shortest: 3
+  perc_conns: 0.70
+  shortest: 2
   seed: null
 
 lr_init: 5e-4
 l2_scale: 0.0
 l2_start: 0
-l2_increase: 0
-l2_init: 0.0
+l2_increase: 200
+l2_init: 0.3
 l2_comm_scale: 0.0
 l2_comm_start: 0
-l2_comm_increase: 0
-l2_comm_init: 0.0
+l2_comm_increase: 200
+l2_comm_init: 0.3
 hidden_size: 64
 
 noise: 0.1
