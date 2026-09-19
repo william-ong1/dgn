@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=mt_l2r_rt_go
+#SBATCH --job-name=mt_l2r_dly_go
 #SBATCH --account=cse
 #SBATCH --partition=gpu-l40s
 #SBATCH --nodes=1
@@ -8,8 +8,8 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=64G
 #SBATCH --time=24:00:00
-#SBATCH --output=/mmfs1/gscratch/golub/wong2/slurm_logs/mt_l2r_rt_go_%j.out
-#SBATCH --error=/mmfs1/gscratch/golub/wong2/slurm_logs/mt_l2r_rt_go_%j.err
+#SBATCH --output=/mmfs1/gscratch/golub/wong2/slurm_logs/mt_l2r_dly_go_%j.out
+#SBATCH --error=/mmfs1/gscratch/golub/wong2/slurm_logs/mt_l2r_dly_go_%j.err
 
 # 20 generate_data runs on 1 GPU: 2 tasks x (5 x h=64, 5 x h=256).
 # Each run draws a unique (l2_scale, l2_comm_scale) pair and its own random seed.
@@ -22,7 +22,7 @@ conda activate /gscratch/golub/wong2/mr-lfads
 
 REPO=/mmfs1/home/wong2/repos/dgn
 RUNS_ROOT=/mmfs1/gscratch/golub/wong2/runs/multi_task/l2_random_runs
-TASKS="rt_go rt_go_anti"
+TASKS="dly_go dly_go_anti"
 RAMP=200
 STAMP="$(date +%y%m%d%H%M)"
 
