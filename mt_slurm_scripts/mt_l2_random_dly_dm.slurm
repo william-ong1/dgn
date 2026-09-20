@@ -11,7 +11,7 @@
 #SBATCH --output=/mmfs1/gscratch/golub/wong2/slurm_logs/mt_l2r_dly_dm_%j.out
 #SBATCH --error=/mmfs1/gscratch/golub/wong2/slurm_logs/mt_l2r_dly_dm_%j.err
 
-# 20 generate_data runs on 1 GPU: 2 tasks x (5 x h=64, 5 x h=256).
+# 10 generate_data runs on 1 GPU: 2 tasks x 5 x h=64.
 # Each run draws a unique (l2_scale, l2_comm_scale) pair and its own random seed.
 # Both L2 terms ramp 0.3 -> 1 over 200 epochs; early stopping waits for that.
 
@@ -32,7 +32,7 @@ cd "${REPO}"
 # Lustre/gscratch: HDF5 locks fail when many runs write data.h5 at once.
 export HDF5_USE_FILE_LOCKING=FALSE
 
-echo "Job ${SLURM_JOB_ID}: 20 random L2/L2-comm runs on 1 GPU  tasks=${TASKS}"
+echo "Job ${SLURM_JOB_ID}: 10 random L2/L2-comm runs on 1 GPU  tasks=${TASKS}"
 
 i=0
 while read -r TASK EXP HS L2 L2C SEED; do
@@ -59,7 +59,7 @@ vals = ["0", "1e-5", "1e-4", "1e-3", "1e-2"]
 pairs = [(a, b) for a in vals for b in vals]
 
 for task in tasks:
-    for exp, hs in [("multi_task", 64), ("multi_task_h256", 256)]:
+    for exp, hs in [("multi_task", 64)]:
         for l2, l2c in random.sample(pairs, 5):
             print(task, exp, hs, l2, l2c, random.randrange(2**31 - 1))
 PY
