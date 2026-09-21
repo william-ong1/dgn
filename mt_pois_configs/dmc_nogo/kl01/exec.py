@@ -8,7 +8,7 @@ import mrlfads.paths as path
 from mrlfads.run import run
 
 # ---------- USER DEFINED PARAMETERS -----------
-PROJECT_STR = os.path.basename(os.getcwd())
+PROJECT_STR = Path(__file__).resolve().parent.parent.name
 EXIST_PROJECT_STR = None
 OVERWRITE = isinstance(EXIST_PROJECT_STR, type(None))
 # ----------------------------------------------
