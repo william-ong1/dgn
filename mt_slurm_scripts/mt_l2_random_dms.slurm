@@ -5,8 +5,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=1
-#SBATCH --cpus-per-task=1
-#SBATCH --mem=64G
+#SBATCH --cpus-per-task=6
+#SBATCH --mem=100G
 #SBATCH --time=24:00:00
 #SBATCH --output=/mmfs1/gscratch/golub/wong2/slurm_logs/mt_l2r_dms_%j.out
 #SBATCH --error=/mmfs1/gscratch/golub/wong2/slurm_logs/mt_l2r_dms_%j.err
