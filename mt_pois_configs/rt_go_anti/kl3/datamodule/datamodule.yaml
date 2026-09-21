@@ -1,0 +1,17 @@
+_target_: mrlfads.datamodules.BasicDataModule
+
+datapath_override: /gscratch/golub/wong2/runs/multi_task/l2_random_runs/multi_task_rt_go_anti_h64_l21e-4_l2c1e-4_l2inc200_gseed2146827022_seed2146827022_id2609192320/
+filename: ""
+
+session_idxs:
+    - 0
+    
+area_names:
+    - A0
+    - A1
+    - A2
+    - A3
+
+batch_size: 16
+train_val_split_seed: 42
+ignore_info: true
