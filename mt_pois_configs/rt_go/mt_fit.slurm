@@ -17,10 +17,10 @@ conda activate /gscratch/golub/wong2/mr-lfads
 
 export PYTHONPATH="/mmfs1/home/wong2/repos/mrlfads2:${PYTHONPATH}"
 
-python /mmfs1/home/wong2/repos/mrlfads2/code/mt_pois/rt_go/kl3/exec.py &
-python /mmfs1/home/wong2/repos/mrlfads2/code/mt_pois/rt_go/kl1/exec.py &
-python /mmfs1/home/wong2/repos/mrlfads2/code/mt_pois/rt_go/kl01/exec.py &
-python /mmfs1/home/wong2/repos/mrlfads2/code/mt_pois/rt_go/kl001/exec.py &
-python /mmfs1/home/wong2/repos/mrlfads2/code/mt_pois/rt_go/kl0001/exec.py &
+python /mmfs1/home/wong2/repos/mrlfads2/code/mt_pois_configs/rt_go/kl3/exec.py &
+python /mmfs1/home/wong2/repos/mrlfads2/code/mt_pois_configs/rt_go/kl1/exec.py &
+python /mmfs1/home/wong2/repos/mrlfads2/code/mt_pois_configs/rt_go/kl01/exec.py &
+python /mmfs1/home/wong2/repos/mrlfads2/code/mt_pois_configs/rt_go/kl001/exec.py &
+python /mmfs1/home/wong2/repos/mrlfads2/code/mt_pois_configs/rt_go/kl0001/exec.py &
 
 wait
