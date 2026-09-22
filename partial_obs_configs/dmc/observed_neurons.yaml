@@ -1,0 +1,37 @@
+# Original HDF5 channel IDs provided to MR-LFADS.
+# Source data files are not modified; this is a load-time mask.
+observed_frac: 0.5
+observed_neuron_seed: 42
+areas:
+  A0:
+    n_full: 64
+    n_observed: 32
+    n_unobserved: 32
+    observed: [3, 4, 9, 10, 11, 12, 13, 16, 17, 22, 23, 25, 26, 27, 28, 29, 31, 34, 41, 43, 44, 46, 47, 53, 54, 55, 56, 58, 59, 60, 61, 63]
+    unobserved: [0, 1, 2, 5, 6, 7, 8, 14, 15, 18, 19, 20, 21, 24, 30, 32, 33, 35, 36, 37, 38, 39, 40, 42, 45, 48, 49, 50, 51, 52, 57, 62]
+    hn_indices_local: [0, 1, 2]
+    hn_indices_original: [3, 4, 9]
+  A1:
+    n_full: 64
+    n_observed: 32
+    n_unobserved: 32
+    observed: [0, 2, 3, 4, 5, 7, 10, 16, 18, 19, 23, 26, 30, 31, 32, 33, 35, 39, 42, 47, 49, 50, 51, 52, 53, 54, 56, 58, 60, 61, 62, 63]
+    unobserved: [1, 6, 8, 9, 11, 12, 13, 14, 15, 17, 20, 21, 22, 24, 25, 27, 28, 29, 34, 36, 37, 38, 40, 41, 43, 44, 45, 46, 48, 55, 57, 59]
+    hn_indices_local: [0, 1, 2]
+    hn_indices_original: [0, 2, 3]
+  A2:
+    n_full: 64
+    n_observed: 32
+    n_unobserved: 32
+    observed: [1, 2, 3, 7, 8, 9, 11, 13, 14, 15, 16, 18, 19, 23, 26, 29, 31, 32, 33, 34, 35, 38, 39, 43, 45, 51, 52, 53, 59, 60, 61, 62]
+    unobserved: [0, 4, 5, 6, 10, 12, 17, 20, 21, 22, 24, 25, 27, 28, 30, 36, 37, 40, 41, 42, 44, 46, 47, 48, 49, 50, 54, 55, 56, 57, 58, 63]
+    hn_indices_local: [0, 1, 2]
+    hn_indices_original: [1, 2, 3]
+  A3:
+    n_full: 64
+    n_observed: 32
+    n_unobserved: 32
+    observed: [2, 3, 4, 6, 7, 9, 10, 12, 13, 14, 15, 22, 23, 25, 26, 28, 29, 31, 32, 36, 43, 44, 45, 46, 47, 48, 50, 53, 56, 58, 61, 62]
+    unobserved: [0, 1, 5, 8, 11, 16, 17, 18, 19, 20, 21, 24, 27, 30, 33, 34, 35, 37, 38, 39, 40, 41, 42, 49, 51, 52, 54, 55, 57, 59, 60, 63]
+    hn_indices_local: [0, 1, 2]
+    hn_indices_original: [2, 3, 4]
