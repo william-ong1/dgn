@@ -11,6 +11,7 @@ from .eval_utils import (
     get_area_names,
     infer_submission_pred_time_len,
     load_memory_network_lag,
+    load_multi_task_lag,
     load_session_arrays,
     resolve_dataset_config_dir,
     slice_truth_for_time_alignment,
@@ -28,8 +29,12 @@ from .metrics import (
     neural_activity_reconstruction,
     truth_input_decoding_memory_network,
     truth_input_decoding_pass_decision,
-    message_p_to_d_reconstruction
+    message_p_to_d_reconstruction,
+    message_reconstruction_by_pathway,
+    truth_input_decoding_multi_task,
 )
+
+from .transform_matrices import compare_transform_matrices
 
 
 def _safe_mean(values) -> float:
@@ -150,6 +155,8 @@ def evaluate_submission(
     poisson_rate_max: float = 40.0,
     bootstrap_n: int = 0,
     bootstrap_seed: int = 0,
+    dgn_run_dir: Path | str | None = None,
+    mrlfads_run_dir: Path | str | None = None,
 ) -> Any:
     """Evaluate a submission HDF5 against ground truth."""
     submission_path = Path(submission_h5).expanduser().resolve()
@@ -176,13 +183,28 @@ def evaluate_submission(
         )
 
     eval_config = config_path
+    transform_kwargs = {
+        "dgn_run_dir": Path(dgn_run_dir) if dgn_run_dir is not None else None,
+        "mrlfads_run_dir": Path(mrlfads_run_dir) if mrlfads_run_dir is not None else None,
+    }
+
     if experiment_type == "memory_network":
         results = evaluate_memory_network_submission(
-            submission, truth, config_path, output_dist, rates_truth=rates_truth
+            submission,
+            truth,
+            config_path,
+            output_dist,
+            rates_truth=rates_truth,
+            **transform_kwargs,
         )
     elif experiment_type == "pass_decision":
         results = evaluate_pass_decision_submission(
-            submission, truth, config_path, output_dist, rates_truth=rates_truth
+            submission,
+            truth,
+            config_path,
+            output_dist,
+            rates_truth=rates_truth,
+            **transform_kwargs,
         )
     elif experiment_type == "multi_task":
         eval_config = resolve_dataset_config_dir(truth_path, config_path)
@@ -192,6 +214,7 @@ def evaluate_submission(
             eval_config,
             output_dist,
             rates_truth=rates_truth,
+            **transform_kwargs,
         )
     else:
         results = {}
@@ -305,6 +328,37 @@ def _flatten_numeric_results(results: dict, prefix: str = "") -> dict[str, float
     return out
 
 
+def _attach_transform_metrics(
+    results: dict,
+    experiment_type: str,
+    *,
+    dgn_run_dir: Path | None = None,
+    mrlfads_run_dir: Path | None = None,
+) -> None:
+    try:
+        transform = compare_transform_matrices(
+            experiment_type,
+            dgn_run_dir=dgn_run_dir,
+            mrlfads_run_dir=mrlfads_run_dir,
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(f"skip transform-matrix metric: {type(exc).__name__}: {exc}")
+        return
+
+    by_area = transform.pop("by-area", {})
+    if by_area:
+        results["transform"] = by_area
+    struct = results.setdefault("structure", {})
+    for key in (
+        "inferred-input-transform-overlap",
+        "message-transform-overlap",
+        "inferred-input-transform-cka",
+        "message-transform-cka",
+    ):
+        if key in transform:
+            struct[key] = transform[key]
+
+
 def evaluate_memory_network_submission(
     submission: ArrayMap,
     truth: ArrayMap,
@@ -312,6 +366,8 @@ def evaluate_memory_network_submission(
     output_dist: str,
     *,
     rates_truth: ArrayMap | None = None,
+    dgn_run_dir: Path | None = None,
+    mrlfads_run_dir: Path | None = None,
 ) -> Any:
     """Evaluate a memory network submission against ground truth."""
 
@@ -327,7 +383,13 @@ def evaluate_memory_network_submission(
     results["neural-activity"] = neural_activity_reconstruction_results
 
     # Evaluate effectome recovery
-    effectome_recovery_results = effectome_cosine_similarity(submission, config_dir)
+    effectome_recovery_results = effectome_cosine_similarity(
+        submission,
+        config_dir,
+        truth,
+        dgn_run_dir=dgn_run_dir,
+        mrlfads_run_dir=mrlfads_run_dir,
+    )
 
     # Evaluate message reconstruction
     message_recon_results = message_reconstruction(truth, submission)
@@ -339,6 +401,12 @@ def evaluate_memory_network_submission(
     struct.update(message_recon_results)
     struct.update(message_latent_recon_results)
     results["structure"] = struct
+    _attach_transform_metrics(
+        results,
+        "memory_network",
+        dgn_run_dir=dgn_run_dir,
+        mrlfads_run_dir=mrlfads_run_dir,
+    )
 
     # Evaluate truth input decoding
     truth_inp_decode_results = truth_input_decoding_memory_network(truth, submission, config_dir)
@@ -367,6 +435,8 @@ def evaluate_pass_decision_submission(
     output_dist: str,
     *,
     rates_truth: ArrayMap | None = None,
+    dgn_run_dir: Path | None = None,
+    mrlfads_run_dir: Path | None = None,
 ) -> Any:
     """Evaluate a pass decision submission against ground truth."""
     
@@ -385,9 +455,22 @@ def evaluate_pass_decision_submission(
     struct = {}
     if len(get_area_names(submission)) > 1:
         struct.update(message_p_to_d_reconstruction(truth, submission))
-        struct.update(effectome_cosine_similarity_pass_decision(submission))
+        struct.update(
+            effectome_cosine_similarity_pass_decision(
+                submission,
+                truth,
+                dgn_run_dir=dgn_run_dir,
+                mrlfads_run_dir=mrlfads_run_dir,
+            )
+        )
     if struct:
         results["structure"] = struct
+    _attach_transform_metrics(
+        results,
+        "pass_decision",
+        dgn_run_dir=dgn_run_dir,
+        mrlfads_run_dir=mrlfads_run_dir,
+    )
 
     # Evaluate truth input decoding
     truth_inp_decode_results = truth_input_decoding_pass_decision(truth, submission, config_dir)
@@ -410,8 +493,10 @@ def evaluate_multi_task_submission(
     output_dist: str,
     *,
     rates_truth: ArrayMap | None = None,
+    dgn_run_dir: Path | None = None,
+    mrlfads_run_dir: Path | None = None,
 ) -> Any:
-    """Evaluate a multi-task submission against ground truth."""
+    """Evaluate a multi-task (Yang) submission against ground truth."""
 
     results: dict[str, Any] = {}
 
@@ -424,14 +509,44 @@ def evaluate_multi_task_submission(
     results["neural-activity"] = neural_activity
 
     struct: dict[str, float] = {}
-    struct.update(effectome_cosine_similarity_multi_task(submission, config_dir))
+    struct.update(
+        effectome_cosine_similarity_multi_task(
+            submission,
+            config_dir,
+            truth,
+            dgn_run_dir=dgn_run_dir,
+            mrlfads_run_dir=mrlfads_run_dir,
+        )
+    )
     struct.update(message_reconstruction(truth, submission))
     struct.update(message_reconstruction_reverse(truth, submission))
+    struct.update(message_reconstruction_by_pathway(truth, submission, config_dir))
     if struct:
         results["structure"] = struct
 
+    truth_inp_decode = truth_input_decoding_multi_task(truth, submission)
+    if truth_inp_decode:
+        results["truth-inp-decode"] = truth_inp_decode
+
     aggregates = _collect_neural_activity_means(neural_activity)
+    aggregates.update(_collect_truth_decode_mean(truth_inp_decode))
     aggregates.update({k: v for k, v in struct.items() if isinstance(v, (int, float, np.floating))})
     results["aggregates"] = aggregates
+
+    try:
+        true_lag = int(load_multi_task_lag(config_dir))
+    except (FileNotFoundError, KeyError, ValueError):
+        true_lag = 0
+    if true_lag > 0 or "message-mesgs" in submission:
+        temporal = lag_recovery_memory_network(
+            truth, submission, max_lag=max(5, true_lag + 3), true_lag=true_lag
+        )
+        if "lag-true" not in temporal:
+            temporal["lag-true"] = float(true_lag)
+            pred_lag = temporal.get("lag-pred", float("nan"))
+            temporal["lag-error"] = (
+                abs(pred_lag - true_lag) if np.isfinite(pred_lag) else float("nan")
+            )
+        results["temporal"] = temporal
 
     return results

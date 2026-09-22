@@ -16,7 +16,9 @@ from .eval_utils import (
     get_area_names,
     get_heldout_neurons,
     load_memory_network_connectome_and_ranks,
-    load_multi_task_effectome,
+    load_multi_task_spec,
+    mrl_message_slots,
+    mt_message_slots,
 )
 
 
@@ -30,6 +32,8 @@ def neural_activity_reconstruction(submission: ArrayMap, truth: ArrayMap, distri
 
     for area_name in area_names:
         area = "area-" + area_name
+        if area not in truth:
+            continue
         mask = np.zeros(truth[area].shape[2], dtype=bool)
         mask[heldout_neurons.get(area, [])] = True
 
@@ -91,109 +95,77 @@ def neural_activity_rate_reconstruction(submission: ArrayMap, truth_rates: Array
     return results
 
 
-def effectome_cosine_similarity(submission: ArrayMap, config_dir: Path):
-    """ 
-    Computes cosine similarity for effectome and inferred-input scores between truth and submission.
+def effectome_cosine_similarity(
+    submission: ArrayMap,
+    config_dir: Path,
+    truth: ArrayMap | None = None,
+    *,
+    dgn_run_dir: Path | str | None = None,
+    mrlfads_run_dir: Path | str | None = None,
+):
     """
-    results = {}
-    true_connectome, true_ranks = load_memory_network_connectome_and_ranks(config_dir)
+    Effectome cosine similarity from actual DGN message / input content.
 
-    if "effectome-scores" in submission:
-        pred_effectome_scores = submission.get("effectome-scores", None)
-        pred_effectome = np.asarray(pred_effectome_scores, dtype=np.float64)
-        np.fill_diagonal(pred_effectome, 0)
-        np.fill_diagonal(true_connectome, 0)
-        cosine_score = cosine_similarity(pred_effectome, true_connectome * true_ranks.reshape(-1, 1))
-        results.update({
-            "effectome-cos-sim": cosine_score,
-        })
-        
-    if "inferred-input-scores" in submission:
-        pred_input_scores = submission.get("inferred-input-scores", None)
-        cosine_score = cosine_similarity(pred_input_scores, true_ranks)
-        results.update({
-            "inferred-input-cos-sim": cosine_score,
-        })
-
-    return results
-
-
-def effectome_cosine_similarity_multi_task(submission: ArrayMap, config_dir: Path) -> dict[str, float]:
+    ``M_ij = ||m^{j → i}||_2`` over trials, time, and channels. When DGN input
+    weights are available, also reports the dynamically weighted effectome.
+    Falls back to the config graph only if ``message-mesgs`` is missing.
     """
-    Effectome cosine similarity (Scos) for multi-region task-trained DGNs.
+    from .effectome import score_memory_network_effectome
 
-    Compares MR-LFADS ``effectome-scores`` against the ground-truth routing graph
-    encoded in the dataset's ``diagram`` (edge presence weighted by ``num_channels``).
+    return score_memory_network_effectome(
+        submission,
+        truth,
+        config_dir,
+        dgn_run_dir=dgn_run_dir,
+        mrlfads_run_dir=mrlfads_run_dir,
+    )
+
+
+def effectome_cosine_similarity_multi_task(
+    submission: ArrayMap,
+    config_dir: Path,
+    truth: ArrayMap | None = None,
+    *,
+    dgn_run_dir: Path | str | None = None,
+    mrlfads_run_dir: Path | str | None = None,
+) -> dict[str, float]:
     """
-    if "effectome-scores" not in submission:
-        return {}
+    Effectome cosine similarity for multi-region task-trained DGNs.
 
-    true_effectome_full, config_area_names = load_multi_task_effectome(config_dir)
-    sub_area_names = get_area_names(submission)
-    if not sub_area_names:
-        return {}
-
-    idx_map = {name: idx for idx, name in enumerate(config_area_names)}
-    n = len(sub_area_names)
-    true_effectome = np.zeros((n, n), dtype=np.float64)
-    for tgt_i, tgt in enumerate(sub_area_names):
-        for src_i, src in enumerate(sub_area_names):
-            if tgt in idx_map and src in idx_map:
-                true_effectome[tgt_i, src_i] = true_effectome_full[idx_map[tgt], idx_map[src]]
-
-    pred_effectome = np.asarray(submission["effectome-scores"], dtype=np.float64)
-    if pred_effectome.shape != true_effectome.shape:
-        return {}
-
-    np.fill_diagonal(pred_effectome, 0)
-    np.fill_diagonal(true_effectome, 0)
-    return {"effectome-cos-sim": cosine_similarity(pred_effectome, true_effectome)}
-
-
-def effectome_cosine_similarity_pass_decision(submission: ArrayMap) -> dict[str, float]:
+    ``M_ij = ||m^{j → i}||_2`` over trials, time, and channels. When DGN input
+    weights are available, also reports the dynamically weighted effectome.
     """
-    Effectome recovery for pass-decision with fixed ground truth graph: P -> D only.
+    from .effectome import score_multi_task_effectome
 
-    Uses submission ``effectome-scores`` if present, binarized at > 0, then computes
-    cosine similarity against the fixed adjacency in submission area order.
+    return score_multi_task_effectome(
+        submission,
+        truth,
+        config_dir,
+        dgn_run_dir=dgn_run_dir,
+        mrlfads_run_dir=mrlfads_run_dir,
+    )
+
+
+def effectome_cosine_similarity_pass_decision(
+    submission: ArrayMap,
+    truth: ArrayMap | None = None,
+    *,
+    dgn_run_dir: Path | str | None = None,
+    mrlfads_run_dir: Path | str | None = None,
+) -> dict[str, float]:
     """
-    if "effectome-scores" not in submission:
-        return {}
+    Pass-decision effectome from actual P→D message content (target × source).
 
-    area_names = get_area_names(submission)
-    if len(area_names) == 0:
-        return {}
+    Inferred-input scores are compared to the L2 of ``truth-inp`` on P (D is 0).
+    """
+    from .effectome import score_pass_decision_effectome
 
-    pred_scores = np.asarray(submission["effectome-scores"], dtype=np.float64)
-    if pred_scores.ndim != 2:
-        return {}
-    if pred_scores.shape[0] != len(area_names) or pred_scores.shape[1] != len(area_names):
-        return {}
-
-    pred_effectome = pred_scores.astype(np.float64)
-    np.fill_diagonal(pred_effectome, 0)
-
-    true_effectome = np.zeros_like(pred_effectome, dtype=np.int64)
-    p_idx = next((i for i, n in enumerate(area_names) if n.lower().startswith("p")), None)
-    d_idx = next((i for i, n in enumerate(area_names) if n.lower().startswith("d")), None)
-    if p_idx is None or d_idx is None:
-        return {}
-
-    # Pass-decision convention: row=source, col=target (P -> D).
-    true_effectome[p_idx, d_idx] = 1
-    np.fill_diagonal(true_effectome, 0)
-
-    results = {"effectome-cos-sim": cosine_similarity(pred_effectome, true_effectome)}
-
-    if "inferred-input-scores" in submission:
-        pred_input_scores = np.asarray(submission["inferred-input-scores"], dtype=np.float64).reshape(-1)
-        if pred_input_scores.shape[0] == len(area_names):
-            # Fixed pass-decision convention: D has stronger inferred-input role than P.
-            true_input_scores = np.zeros(len(area_names), dtype=np.float64)
-            true_input_scores[d_idx] = 1.0
-            results["inferred-input-cos-sim"] = cosine_similarity(pred_input_scores, true_input_scores)
-
-    return results
+    return score_pass_decision_effectome(
+        submission,
+        truth,
+        dgn_run_dir=dgn_run_dir,
+        mrlfads_run_dir=mrlfads_run_dir,
+    )
 
 
 def truth_input_decoding_memory_network(
@@ -314,6 +286,87 @@ def truth_input_decoding_pass_decision(
     return results
 
 
+def truth_input_decoding_multi_task(
+    truth: ArrayMap,
+    submission: ArrayMap,
+) -> dict[str, dict[str, float]]:
+    """
+    Decode each region's ground-truth external inputs.
+
+    Prefers MR-LFADS inferred inputs (``inferred-input-{area}``) when present,
+    and also reports decoding from inferred regional activity (``area-*``).
+    """
+    area_names = get_area_names(submission)
+    results: dict[str, dict[str, float]] = {}
+    for name in area_names:
+        y = truth.get(f"inputs-{name}")
+        if y is None:
+            continue
+        y = np.asarray(y, dtype=np.float64)
+        if y.ndim < 2 or y.shape[-1] == 0 or y.size == 0:
+            continue
+        area_scores: dict[str, float] = {}
+        inferred_key = f"inferred-input-{name}"
+        if inferred_key in submission:
+            x_inf = np.asarray(submission[inferred_key], dtype=np.float64)
+            if x_inf.size and x_inf.shape[-1] > 0:
+                area_scores["inferred-input"] = float(decode_r2_from_features(y, x_inf))
+        area_key = f"area-{name}"
+        if area_key in submission:
+            x_act = np.asarray(submission[area_key], dtype=np.float64)
+            if x_act.size and x_act.shape[-1] > 0:
+                area_scores["truth-inp"] = float(decode_r2_from_features(y, x_act))
+        if area_scores:
+            results[name] = area_scores
+    return results
+
+
+def message_reconstruction_by_pathway(
+    truth: ArrayMap,
+    submission: ArrayMap,
+    config_dir: Path,
+) -> dict[str, float]:
+    """
+    Per-pathway ridge decode: inferred ``m̂^{j→i}`` → ground-truth ``m^{j→i}``.
+    """
+    if "message-mesgs" not in submission or "message-mesgs" not in truth:
+        return {}
+    try:
+        spec = load_multi_task_spec(config_dir)
+    except FileNotFoundError:
+        return {}
+
+    y = np.asarray(truth["message-mesgs"], dtype=np.float64)
+    y_hat = np.asarray(submission["message-mesgs"], dtype=np.float64)
+    slots = [s for s in mt_message_slots(spec) if not s["is_output"]]
+    if not slots:
+        return {}
+
+    area_names = spec["area_names"]
+    n = len(area_names)
+    n_off = n * (n - 1)
+    inferred_map: dict[tuple[str, str], slice] = {}
+    if n_off > 0 and y_hat.shape[-1] % n_off == 0:
+        com_dim = int(y_hat.shape[-1] // n_off)
+        for slot in mrl_message_slots(area_names, com_dim):
+            inferred_map[(slot["target"], slot["source"])] = slot["slice"]
+
+    results: dict[str, float] = {}
+    scores: list[float] = []
+    for slot in slots:
+        yt = y[..., slot["slice"]]
+        if yt.size == 0 or yt.shape[-1] == 0:
+            continue
+        key = (slot["target"], slot["source"])
+        yh = y_hat[..., inferred_map[key]] if key in inferred_map else y_hat
+        score = float(decode_r2_from_features(yt, yh))
+        results[f"message-r2-{slot['source']}-to-{slot['target']}"] = score
+        scores.append(score)
+    if scores:
+        results["message-r2-pathway-mean"] = float(np.nanmean(np.asarray(scores, dtype=np.float64)))
+    return results
+
+
 def message_reconstruction(truth: ArrayMap, submission: ArrayMap) -> dict[str, float]:
     """
     Message reconstruction R²: linearly predict ground-truth messages from inferred
@@ -382,12 +435,15 @@ def lag_recovery_memory_network(
     nan_result = {"lag-pred": float("nan"), "lag-r2-best": float("nan")}
     if true_lag is not None:
         nan_result["lag-r2"] = float("nan")
+        nan_result["lag-error"] = float("nan")
 
-    if "message-mesgs" not in submission:
+    if "message-mesgs" not in submission or "message-mesgs" not in truth:
         return nan_result
 
     X = np.asarray(submission["message-mesgs"], dtype=np.float64)
     Y = np.asarray(truth["message-mesgs"], dtype=np.float64)
+    if true_lag is not None:
+        max_lag = max(int(max_lag), abs(int(true_lag)) + 3)
 
     best_lag = 0
     best_r2 = -np.inf
@@ -408,11 +464,21 @@ def lag_recovery_memory_network(
     results = {"lag-pred": float(best_lag), "lag-r2-best": float(best_r2)}
 
     if true_lag is not None:
+        results["lag-true"] = float(true_lag)
+        results["lag-error"] = float(abs(best_lag - int(true_lag)))
         x_aligned, y_aligned = _align_source_delay(X, Y, int(true_lag))
         if x_aligned is None:
             results["lag-r2"] = float("nan")
         else:
             results["lag-r2"] = float(decode_r2_from_features(y_aligned, x_aligned))
+        for delta, tag in ((-2, "m2"), (-1, "m1"), (0, "0"), (1, "p1"), (2, "p2")):
+            k = int(true_lag) + delta
+            xa, ya = _align_source_delay(X, Y, k)
+            results[f"lag-r2-rel-{tag}"] = (
+                float("nan")
+                if xa is None
+                else float(decode_r2_from_features(ya, xa))
+            )
 
     return results
 
@@ -510,13 +576,19 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 
 def _align_source_delay(X_tgt: np.ndarray, Y_src: np.ndarray, lag: int) -> tuple[np.ndarray | None, np.ndarray | None]:
     """
-    Align target features X_tgt(t) with delayed source inputs Y_src(t-lag).
+    Align inferred features ``X(t)`` with ground truth ``Y(t - lag)``.
+
+    ``lag > 0``: inferred is later than truth (``X[:, lag:]`` vs ``Y[:, :-lag]``).
+    ``lag < 0``: inferred is earlier than truth (``X[:, :T+lag]`` vs ``Y[:, -lag:]``).
     """
-    T = min(X_tgt.shape[1], Y_src.shape[1])
-    if T <= 1 or lag < 0 or lag >= T:
+    T = min(int(X_tgt.shape[1]), int(Y_src.shape[1]))
+    if T <= 1 or abs(int(lag)) >= T:
         return None, None
     Xc = X_tgt[:, :T]
     Yc = Y_src[:, :T]
+    lag = int(lag)
     if lag == 0:
         return Xc, Yc
-    return Xc[:, lag:], Yc[:, :-lag]
+    if lag > 0:
+        return Xc[:, lag:], Yc[:, :-lag]
+    return Xc[:, : T + lag], Yc[:, -lag:]

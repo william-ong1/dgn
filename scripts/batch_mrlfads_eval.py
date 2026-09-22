@@ -40,7 +40,10 @@ from src.evals.evals import evaluate_submission
 from src.evals.eval_utils import (
     discover_mrlfads_runs,
     load_mrlfads_ic_enc_seq_len,
+    parse_yang_run_name,
+    resolve_dgn_run_dir,
     resolve_mrlfads_run_data_h5,
+    resolve_rates_truth_h5,
     results_to_summary_rows,
     split_results_for_display,
 )
@@ -123,6 +126,8 @@ def _run_eval(
     rates_truth_h5: Path | None = None,
     poisson_dt: float = 0.01,
     poisson_rate_max: float = 40.0,
+    mrlfads_run_dir: Path | None = None,
+    dgn_run_dir: Path | None = None,
 ) -> dict:
     results = evaluate_submission(
         submission_h5=submission_h5,
@@ -134,6 +139,8 @@ def _run_eval(
         rates_truth_h5=rates_truth_h5,
         poisson_dt=poisson_dt,
         poisson_rate_max=poisson_rate_max,
+        mrlfads_run_dir=mrlfads_run_dir,
+        dgn_run_dir=dgn_run_dir,
     )
     region_df, global_df, temporal_df = split_results_for_display(results)
 
@@ -227,7 +234,10 @@ def main() -> None:
     parser.add_argument(
         "--run-glob",
         default=None,
-        help="Optional glob to filter run folder names (e.g. 'rt_go_kl*' or '*_kl0001_*').",
+        help=(
+            "Optional glob to filter run folder names (e.g. 'rt_go_kl*' or '*_kl*'). "
+            "Defaults to '*_kl*' for --experiment-type multi_task so MN/PD dirs are skipped."
+        ),
     )
     parser.add_argument(
         "--recursive",
@@ -270,7 +280,19 @@ def main() -> None:
         "--rates-truth-h5",
         type=Path,
         default=None,
-        help="Optional gaussian.h5 for rates-vs-rates R² (continuous activity -> λ).",
+        help=(
+            "Optional gaussian.h5 for rates-vs-rates R² (continuous activity -> λ). "
+            "When omitted, uses sibling gaussian.h5 next to each run's data.h5."
+        ),
+    )
+    parser.add_argument(
+        "--dgn-run-dir",
+        type=Path,
+        default=None,
+        help=(
+            "DGN run with lightning_checkpoints/ for weighted effectome. "
+            "When omitted, uses the parent of each run's data.h5 if it has checkpoints."
+        ),
     )
     parser.add_argument(
         "--poisson-dt",
@@ -330,7 +352,11 @@ def main() -> None:
     if not config_dir.is_dir():
         raise SystemExit(f"config dir not found: {config_dir}")
 
-    runs = _discover_runs(runs_dir, run_glob=args.run_glob, recursive=args.recursive)
+    run_glob = args.run_glob
+    if run_glob is None and args.experiment_type == "multi_task":
+        run_glob = "*_kl*"
+
+    runs = _discover_runs(runs_dir, run_glob=run_glob, recursive=args.recursive)
     if not runs:
         raise SystemExit(f"No runnable checkpoints found in {runs_dir}")
 
@@ -379,7 +405,16 @@ def main() -> None:
             print(f"skip eval {run_name}: missing {output_h5}")
             continue
 
-        print(f">> evaluate {run_name} (truth_time_start={truth_time_start}, data={input_h5})")
+        run_rates = rates_truth_h5 if rates_truth_h5 is not None else resolve_rates_truth_h5(truth_h5)
+        run_dgn = (
+            args.dgn_run_dir.expanduser().resolve()
+            if args.dgn_run_dir is not None
+            else resolve_dgn_run_dir(truth_h5)
+        )
+        print(
+            f">> evaluate {run_name} (truth_time_start={truth_time_start}, "
+            f"data={input_h5}, rates={run_rates}, dgn={run_dgn})"
+        )
         try:
             results = _run_eval(
                 submission_h5=output_h5,
@@ -389,15 +424,21 @@ def main() -> None:
                 output_dist=args.output_dist,
                 truth_time_start=truth_time_start,
                 output_csv=eval_csv,
-                rates_truth_h5=rates_truth_h5,
+                rates_truth_h5=run_rates,
                 poisson_dt=args.poisson_dt,
                 poisson_rate_max=args.poisson_rate_max,
+                mrlfads_run_dir=run_dir,
+                dgn_run_dir=run_dgn,
             )
         except Exception as e:
             print(f"skip eval {run_name}: {type(e).__name__}: {e}")
             continue
 
-        summary_rows.extend(results_to_summary_rows(run_name, results))
+        task, kl = parse_yang_run_name(run_name)
+        for row in results_to_summary_rows(run_name, results):
+            row["task"] = task
+            row["kl"] = kl
+            summary_rows.append(row)
 
         region_df, _, _ = split_results_for_display(results)
         if not region_df.empty:
@@ -413,6 +454,8 @@ def main() -> None:
 
     if summary_rows:
         summary_df = pd.DataFrame(summary_rows)
+        front = [c for c in ("run", "task", "kl", "region") if c in summary_df.columns]
+        summary_df = summary_df[front + [c for c in summary_df.columns if c not in front]]
         summary_csv.parent.mkdir(parents=True, exist_ok=True)
         summary_df.to_csv(summary_csv, index=False)
         print(f"\nWrote summary: {summary_csv}")

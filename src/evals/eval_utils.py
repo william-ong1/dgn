@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from fnmatch import fnmatch
 from pathlib import Path
 import h5py
 import numpy as np
@@ -48,7 +49,7 @@ def slice_truth_for_time_alignment(truth: ArrayMap, *, truth_time_start: int, pr
 
     end = truth_time_start + pred_time_len
     out: ArrayMap = {}
-    must_align_prefixes = ("area-", "message-")
+    must_align_prefixes = ("area-", "message-", "inputs-")
 
     for key, arr in truth.items():
         if key.startswith("meta-"):
@@ -76,7 +77,52 @@ def slice_truth_for_time_alignment(truth: ArrayMap, *, truth_time_start: int, pr
 
 # Get area names from submission
 def get_area_names(submission: ArrayMap) -> list[str]:
-    return [k.removeprefix("area-") for k in submission.keys() if k.startswith("area-")]
+    """Primary ``area-*`` datasets only (skip ``area-A0-readout`` / predictor heads)."""
+    names: list[str] = []
+    for key in submission.keys():
+        if not key.startswith("area-"):
+            continue
+        name = key.removeprefix("area-")
+        if "-" in name:
+            continue
+        names.append(name)
+    return names
+
+
+YANG20_TASKS = (
+    "dly_go_anti",
+    "fd_go_anti",
+    "rt_go_anti",
+    "dly_dm_mod_1",
+    "dly_dm_mod_2",
+    "ctxt_dm_max",
+    "dly_dm_max",
+    "dms_nogo",
+    "dmc_nogo",
+    "ctxt_dm_1",
+    "ctxt_dm_2",
+    "dly_dm_1",
+    "dly_dm_2",
+    "dly_go",
+    "fd_go",
+    "rt_go",
+    "dm_1",
+    "dm_2",
+    "dms",
+    "dmc",
+)
+
+
+def parse_yang_run_name(name: str) -> tuple[str, str]:
+    """Parse ``{task}_kl{scale}_id…`` → ``(task, kl_tag)``."""
+    stem = name
+    for task in YANG20_TASKS:
+        prefix = f"{task}_"
+        if stem.startswith(prefix):
+            rest = stem[len(prefix) :]
+            kl = rest.split("_", 1)[0] if rest else ""
+            return task, kl
+    return "unknown", ""
 
 
 def activity_to_lam(
@@ -85,13 +131,14 @@ def activity_to_lam(
     dt: float,
     rate_max: float,
 ) -> np.ndarray:
-    """Map continuous hidden activity to Poisson rate λ (expected counts per bin)."""
+    """Map continuous hidden activity to Poisson rate λ (expected counts per bin).
+
+    Matches ``area_activity_to_poisson_counts`` / Klone ``poissonify.py``:
+    ``λ = clip(rate_max * (x + 1) / 2 * dt, min=0)`` with no z-score.
+    """
     x = np.asarray(activity, dtype=np.float64)
-    sd = float(np.std(x))
-    if sd >= 1e-12:
-        x = (x - float(np.mean(x))) / sd
     rates = rate_max * (x + 1.0) / 2.0
-    lam = np.clip(rates * dt, a_min=0.0, a_max=rate_max)
+    lam = np.clip(rates * dt, a_min=0.0, a_max=None)
     return lam.astype(np.float32)
 
 
@@ -157,6 +204,159 @@ def resolve_dataset_config_dir(truth_h5: Path | str, fallback: Path | str) -> Pa
     return Path(fallback).expanduser().resolve()
 
 
+def _normalize_diagram(raw) -> list[tuple[str, str, str]]:
+    edges: list[tuple[str, str, str]] = []
+    if not raw:
+        return edges
+    for edge in raw:
+        if len(edge) < 2:
+            continue
+        src, dst = str(edge[0]), str(edge[1])
+        weight = str(edge[2]) if len(edge) > 2 else "1"
+        edges.append((src, dst, weight))
+    return edges
+
+
+def _diagram_from_yaml_candidates(config_dir: Path, cfg: dict) -> list[tuple[str, str, str]]:
+    diagram = _normalize_diagram(cfg.get("diagram"))
+    if diagram:
+        return diagram
+    for cand in (
+        config_dir / "realized_diagram.yaml",
+        config_dir.parent / "realized_diagram.yaml",
+    ):
+        if not cand.is_file():
+            continue
+        with cand.open("r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+        diagram = _normalize_diagram(raw.get("diagram") or raw)
+        if diagram:
+            return diagram
+    return []
+
+
+def load_multi_task_spec(config_dir: Path) -> dict[str, Any]:
+    """Load MultiTaskNet graph / delay / channel layout from a DGN config dir."""
+    model_cfg = config_dir / "model" / "model.yaml"
+    if not model_cfg.is_file():
+        raise FileNotFoundError(f"Multi-task model config not found: {model_cfg}")
+
+    with model_cfg.open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+
+    num_areas = int(cfg.get("num_areas", 4))
+    return {
+        "num_areas": num_areas,
+        "num_channels": int(cfg.get("num_channels", 8)),
+        "num_angles": int(cfg.get("num_angles", 36)),
+        "delay": int(cfg.get("delay", 0)),
+        "diagram": _diagram_from_yaml_candidates(config_dir, cfg),
+        "stim_input_areas": list(cfg.get("stim_input_areas") or []),
+        "area_names": [f"A{i}" for i in range(num_areas)],
+    }
+
+
+def load_multi_task_lag(config_dir: Path) -> int:
+    return int(load_multi_task_spec(config_dir)["delay"])
+
+
+def mt_external_input_dim(spec: dict[str, Any], area: str) -> int:
+    stim = spec.get("stim_input_areas") or []
+    n = 0
+    if len(stim) > 0 and str(stim[0]) == area:
+        n += 1
+    if len(stim) > 1 and str(stim[1]) == area:
+        n += 2
+    if len(stim) > 2 and str(stim[2]) == area:
+        n += 2
+    if len(stim) > 3 and str(stim[3]) == area:
+        n += 1
+    return n
+
+
+def mt_message_slots(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flattened ``message-mesgs`` slots: per source, recurrent successors, then readout."""
+    n = int(spec["num_areas"])
+    out_name = f"A{n}"
+    rec_succs = {f"A{i}": [] for i in range(n)}
+    has_out = {f"A{i}": False for i in range(n)}
+    for src, dst, _weight in spec.get("diagram") or []:
+        if dst == out_name and src in has_out:
+            has_out[src] = True
+        elif src in rec_succs and dst in rec_succs and dst not in rec_succs[src]:
+            rec_succs[src].append(dst)
+
+    slots: list[dict[str, Any]] = []
+    offset = 0
+    for i in range(n):
+        src = f"A{i}"
+        for dst in rec_succs[src]:
+            width = int(spec["num_channels"])
+            slots.append(
+                {
+                    "source": src,
+                    "target": dst,
+                    "source_idx": i,
+                    "target_idx": int(dst[1:]),
+                    "is_self": False,
+                    "is_output": False,
+                    "slice": slice(offset, offset + width),
+                }
+            )
+            offset += width
+        if has_out[src]:
+            width = int(spec["num_angles"])
+            slots.append(
+                {
+                    "source": src,
+                    "target": out_name,
+                    "source_idx": i,
+                    "target_idx": n,
+                    "is_self": False,
+                    "is_output": True,
+                    "slice": slice(offset, offset + width),
+                }
+            )
+            offset += width
+    return slots
+
+
+def mt_predecessors(spec: dict[str, Any], target: str) -> list[str]:
+    preds: list[str] = []
+    n = int(spec["num_areas"])
+    for src, dst, _weight in spec.get("diagram") or []:
+        if dst != target:
+            continue
+        if not str(src).startswith("A"):
+            continue
+        try:
+            src_i = int(str(src)[1:])
+        except ValueError:
+            continue
+        if 0 <= src_i < n and src not in preds:
+            preds.append(src)
+    return preds
+
+
+def mrl_message_slots(area_names: list[str], com_dim: int) -> list[dict[str, Any]]:
+    """MR-LFADS ``message-mesgs`` pack: per target, every other source."""
+    slots: list[dict[str, Any]] = []
+    offset = 0
+    for tgt in area_names:
+        for src in area_names:
+            if src == tgt:
+                continue
+            slots.append(
+                {
+                    "source": src,
+                    "target": tgt,
+                    "slice": slice(offset, offset + int(com_dim)),
+                }
+            )
+            offset += int(com_dim)
+    return slots
+
+
 def load_multi_task_effectome(config_dir: Path) -> tuple[np.ndarray, list[str]]:
     """
     Build a ground-truth effectome matrix from a MultiTaskNet ``diagram``.
@@ -164,28 +364,30 @@ def load_multi_task_effectome(config_dir: Path) -> tuple[np.ndarray, list[str]]:
     Returns ``effectome[target, source]`` with edge weight ``num_channels`` for
     each inter-area edge among recurrent areas ``A0 … A{num_areas-1}``.
     """
-    model_cfg = config_dir / "model" / "model.yaml"
-    if not model_cfg.is_file():
-        raise FileNotFoundError(f"Multi-task model config not found: {model_cfg}")
-
-    with model_cfg.open("r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-
-    num_areas = int(cfg["num_areas"])
-    num_channels = float(cfg.get("num_channels", 1))
-    area_names = [f"A{i}" for i in range(num_areas)]
-    name_to_idx = {name: idx for idx, name in enumerate(area_names)}
-
-    effectome = np.zeros((num_areas, num_areas), dtype=np.float64)
-    for edge in cfg.get("diagram") or []:
-        if len(edge) < 2:
+    spec = load_multi_task_spec(config_dir)
+    area_names = spec["area_names"]
+    n = len(area_names)
+    effectome = np.zeros((n, n), dtype=np.float64)
+    for slot in mt_message_slots(spec):
+        if slot["is_output"]:
             continue
-        src, dst = str(edge[0]), str(edge[1])
-        if src not in name_to_idx or dst not in name_to_idx:
-            continue
-        effectome[name_to_idx[dst], name_to_idx[src]] = num_channels
-
+        effectome[slot["target_idx"], slot["source_idx"]] = float(spec["num_channels"])
     return effectome, area_names
+
+
+def resolve_rates_truth_h5(data_h5: Path) -> Path | None:
+    """Sibling ``gaussian.h5`` next to Poisson ``data.h5`` (Klone rename layout)."""
+    cand = Path(data_h5).expanduser().resolve().parent / "gaussian.h5"
+    return cand if cand.is_file() else None
+
+
+def resolve_dgn_run_dir(data_h5: Path) -> Path | None:
+    """DGN run directory that produced ``data.h5`` (has lightning_checkpoints/)."""
+    run = Path(data_h5).expanduser().resolve().parent
+    ckpt = run / "lightning_checkpoints"
+    if ckpt.is_dir() and any(ckpt.glob("*.ckpt")):
+        return run
+    return None
 
 
 def load_mrlfads_ic_enc_seq_len(run_dir: Path) -> int:
@@ -275,7 +477,7 @@ def discover_mrlfads_runs(
             candidates.append(path)
 
     if run_glob:
-        candidates = [p for p in candidates if p.match(run_glob)]
+        candidates = [p for p in candidates if fnmatch(p.name, run_glob)]
 
     return candidates
 
@@ -288,6 +490,12 @@ def split_results_for_display(results: dict) -> tuple[pd.DataFrame, pd.DataFrame
     neural = results.get("neural-activity", {})
     if isinstance(neural, dict):
         for region, metrics in neural.items():
+            if isinstance(metrics, dict):
+                region_rows.setdefault(region, {}).update(metrics)
+
+    transform = results.get("transform", {})
+    if isinstance(transform, dict):
+        for region, metrics in transform.items():
             if isinstance(metrics, dict):
                 region_rows.setdefault(region, {}).update(metrics)
 
