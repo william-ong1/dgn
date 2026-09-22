@@ -34,13 +34,18 @@ Runs are ranked by
 among runs with ``valid_acc_best >= --min-acc``. Collapsed runs are listed but
 not chosen as datasets.
 
-By default only the six tasks without an MR-LFADS config are ranked
+By default only the six tasks without an IRCB-26 / MR-LFADS config are ranked
 (``dm_1``, ``dm_2``, ``ctxt_dm_max``, ``dly_dm_mod_1``, ``dly_dm_mod_2``,
-``dly_dm_max``). Pass ``--tasks all`` to rank every Yang-20 run.
+``dly_dm_max``). Named groups:
 
-Example (Klone, missing tasks only):
+    --tasks missing      the six above (default)
+    --tasks unreleased   ``ctxt_dm_max`` and ``dly_dm_max`` only
+    --tasks all          every Yang-20 run
+
+Example (Klone, the two unreleased max tasks, h64 only):
     python scripts/mt_rank_poisson_dataset.py \\
-        /gscratch/golub/wong2/runs/multi_task/l2_random_runs
+        /gscratch/golub/wong2/runs/multi_task/l2_random_runs \\
+        --tasks unreleased --hidden-size 64
 """
 from __future__ import annotations
 
@@ -95,6 +100,13 @@ SELECTED_TASKS = (
     "dmc_nogo",
 )
 MISSING_TASKS = tuple(t for t in YANG20_TASKS if t not in SELECTED_TASKS)
+# The two max variants still missing from the IRCB-26 cognitive_task_suite.
+UNRELEASED_TASKS = ("ctxt_dm_max", "dly_dm_max")
+TASK_GROUPS = {
+    "all": YANG20_TASKS,
+    "missing": MISSING_TASKS,
+    "unreleased": UNRELEASED_TASKS,
+}
 
 
 def parse_task(name: str) -> str:
@@ -392,6 +404,14 @@ def discover_runs(runs_dir: Path, patterns: list[str], h5_name: str) -> list[Pat
     return sorted(matched)
 
 
+def resolve_tasks(raw: list[str]) -> list[str]:
+    """Expand group aliases (``all`` / ``missing`` / ``unreleased``) or keep names."""
+    expanded: list[str] = []
+    for item in raw:
+        expanded.extend(TASK_GROUPS[item] if item in TASK_GROUPS else (item,))
+    return list(dict.fromkeys(expanded))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -411,26 +431,35 @@ def main() -> None:
         "--tasks",
         type=str,
         nargs="+",
-        default=list(MISSING_TASKS),
+        default=["missing"],
         help=(
-            "Only rank these tasks. Default: the six without configs "
-            f"({', '.join(MISSING_TASKS)}). Pass 'all' for every Yang-20 task."
+            "Tasks to rank, or a group: missing (default, six without configs), "
+            "unreleased (ctxt_dm_max dly_dm_max), all. "
+            f"Missing: {', '.join(MISSING_TASKS)}."
         ),
+    )
+    parser.add_argument(
+        "--hidden-size",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Only rank these hidden sizes (e.g. 64). Default: every h in the folder.",
     )
     args = parser.parse_args()
 
     runs_dir = Path(args.runs_dir).expanduser().resolve()
     h5_name = args.h5
     out_dir = runs_dir
-    tasks = list(YANG20_TASKS) if args.tasks == ["all"] else list(args.tasks)
+    tasks = resolve_tasks(args.tasks)
     unknown = [t for t in tasks if t not in YANG20_INDEX]
     if unknown:
         raise SystemExit(f"Unknown --tasks: {unknown}")
-    default_csv = (
-        "mt_poisson_dataset_pairs.csv"
-        if set(tasks) == set(YANG20_TASKS)
-        else "mt_poisson_dataset_pairs_missing.csv"
-    )
+    if set(tasks) == set(YANG20_TASKS):
+        default_csv = "mt_poisson_dataset_pairs.csv"
+    elif set(tasks) == set(UNRELEASED_TASKS):
+        default_csv = "mt_poisson_dataset_pairs_unreleased.csv"
+    else:
+        default_csv = "mt_poisson_dataset_pairs_missing.csv"
     pair_path = (
         Path(args.output).expanduser().resolve()
         if args.output
@@ -442,12 +471,18 @@ def main() -> None:
 
     run_dirs = discover_runs(runs_dir, args.pattern, h5_name)
     run_dirs = [d for d in run_dirs if parse_task(d.name) in set(tasks)]
+    if args.hidden_size:
+        keep_h = set(args.hidden_size)
+        run_dirs = [d for d in run_dirs if parse_hidden(d.name) in keep_h]
     if not run_dirs:
         raise SystemExit(
             f"No runs with {h5_name} under {runs_dir} for tasks {tasks}"
+            + (f" hidden_size={args.hidden_size}" if args.hidden_size else "")
         )
 
     print(f"Tasks: {', '.join(tasks)}", flush=True)
+    if args.hidden_size:
+        print(f"Hidden size filter: {args.hidden_size}", flush=True)
     print(f"Found {len(run_dirs)} runs under {runs_dir}", flush=True)
     print(f"Poisson: dt={POISSON_DT}s ({POISSON_DT*1000:.0f} ms), rate_max={POISSON_RATE_MAX} Hz", flush=True)
     print(f"Pairs CSV: {pair_path}", flush=True)
