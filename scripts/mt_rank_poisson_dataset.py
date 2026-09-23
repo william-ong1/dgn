@@ -34,19 +34,17 @@ Runs are ranked by
 among runs with ``valid_acc_best >= --min-acc``. Collapsed runs are listed but
 not chosen as datasets.
 
-By default only the six Yang-20 tasks without an IRCB-26 dataset are ranked
-(``dm_1``, ``dm_2``, ``dly_dm_mod_1``, ``dly_dm_mod_2``, ``ctxt_dm_max``,
-``dly_dm_max``). Named groups:
+By default every Yang-20 task is ranked, **h64 only**. Named groups:
 
-    --tasks missing      the six above (default)
-    --tasks unreleased   same six (alias)
+    --tasks all          every Yang-20 run (default)
     --tasks selected     the 14 already in IRCB-26
-    --tasks all          every Yang-20 run
+    --tasks missing      the six without an IRCB-26 dataset
+    --tasks unreleased   same six (alias)
 
-Example (Klone, the six without datasets, h64 only):
+Example (Klone, all tasks, h64 only):
     python scripts/mt_rank_poisson_dataset.py \\
         /gscratch/golub/wong2/runs/multi_task/l2_random_runs \\
-        --tasks missing --hidden-size 64
+        --tasks all --hidden-size 64
 """
 from __future__ import annotations
 
@@ -440,10 +438,10 @@ def main() -> None:
         "--tasks",
         type=str,
         nargs="+",
-        default=["missing"],
+        default=["all"],
         help=(
-            "Tasks to rank, or a group: missing / unreleased (default, six "
-            "without IRCB-26 datasets), selected (14 released), all. "
+            "Tasks to rank, or a group: all (default), selected (14 released), "
+            "missing / unreleased (six without IRCB-26 datasets). "
             f"Missing: {', '.join(MISSING_TASKS)}."
         ),
     )
@@ -451,8 +449,8 @@ def main() -> None:
         "--hidden-size",
         type=int,
         nargs="+",
-        default=None,
-        help="Only rank these hidden sizes (e.g. 64). Default: every h in the folder.",
+        default=[64],
+        help="Only rank these hidden sizes. Default: 64 (skips h256).",
     )
     args = parser.parse_args()
 
@@ -463,14 +461,13 @@ def main() -> None:
     unknown = [t for t in tasks if t not in YANG20_INDEX]
     if unknown:
         raise SystemExit(f"Unknown --tasks: {unknown}")
-    if set(tasks) == set(YANG20_TASKS):
-        default_csv = "mt_poisson_dataset_pairs.csv"
-    elif set(tasks) == set(SELECTED_TASKS):
-        default_csv = "mt_poisson_dataset_pairs_selected.csv"
+    h_tag = "_h64" if args.hidden_size == [64] else ""
+    if set(tasks) == set(SELECTED_TASKS):
+        default_csv = f"mt_poisson_dataset_pairs_selected{h_tag}.csv"
     elif set(tasks) == set(MISSING_TASKS) or set(tasks) == set(UNRELEASED_TASKS):
-        default_csv = "mt_poisson_dataset_pairs_missing.csv"
+        default_csv = f"mt_poisson_dataset_pairs_missing{h_tag}.csv"
     else:
-        default_csv = "mt_poisson_dataset_pairs.csv"
+        default_csv = f"mt_poisson_dataset_pairs{h_tag}.csv"
     pair_path = (
         Path(args.output).expanduser().resolve()
         if args.output
