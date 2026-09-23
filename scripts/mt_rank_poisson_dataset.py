@@ -34,18 +34,19 @@ Runs are ranked by
 among runs with ``valid_acc_best >= --min-acc``. Collapsed runs are listed but
 not chosen as datasets.
 
-By default only the six tasks without an IRCB-26 / MR-LFADS config are ranked
-(``dm_1``, ``dm_2``, ``ctxt_dm_max``, ``dly_dm_mod_1``, ``dly_dm_mod_2``,
+By default only the six Yang-20 tasks without an IRCB-26 dataset are ranked
+(``dm_1``, ``dm_2``, ``dly_dm_mod_1``, ``dly_dm_mod_2``, ``ctxt_dm_max``,
 ``dly_dm_max``). Named groups:
 
     --tasks missing      the six above (default)
-    --tasks unreleased   ``ctxt_dm_max`` and ``dly_dm_max`` only
+    --tasks unreleased   same six (alias)
+    --tasks selected     the 14 already in IRCB-26
     --tasks all          every Yang-20 run
 
-Example (Klone, the two unreleased max tasks, h64 only):
+Example (Klone, the six without datasets, h64 only):
     python scripts/mt_rank_poisson_dataset.py \\
         /gscratch/golub/wong2/runs/multi_task/l2_random_runs \\
-        --tasks unreleased --hidden-size 64
+        --tasks missing --hidden-size 64
 """
 from __future__ import annotations
 
@@ -100,10 +101,18 @@ SELECTED_TASKS = (
     "dmc_nogo",
 )
 MISSING_TASKS = tuple(t for t in YANG20_TASKS if t not in SELECTED_TASKS)
-# The two max variants still missing from the IRCB-26 cognitive_task_suite.
-UNRELEASED_TASKS = ("ctxt_dm_max", "dly_dm_max")
+# All Yang-20 tasks that are not yet in IRCB-26 / cognitive_task_suite.
+UNRELEASED_TASKS = (
+    "dm_1",
+    "dm_2",
+    "dly_dm_mod_1",
+    "dly_dm_mod_2",
+    "ctxt_dm_max",
+    "dly_dm_max",
+)
 TASK_GROUPS = {
     "all": YANG20_TASKS,
+    "selected": SELECTED_TASKS,
     "missing": MISSING_TASKS,
     "unreleased": UNRELEASED_TASKS,
 }
@@ -405,7 +414,7 @@ def discover_runs(runs_dir: Path, patterns: list[str], h5_name: str) -> list[Pat
 
 
 def resolve_tasks(raw: list[str]) -> list[str]:
-    """Expand group aliases (``all`` / ``missing`` / ``unreleased``) or keep names."""
+    """Expand group aliases (``all`` / ``selected`` / ``missing`` / ``unreleased``) or keep names."""
     expanded: list[str] = []
     for item in raw:
         expanded.extend(TASK_GROUPS[item] if item in TASK_GROUPS else (item,))
@@ -433,8 +442,8 @@ def main() -> None:
         nargs="+",
         default=["missing"],
         help=(
-            "Tasks to rank, or a group: missing (default, six without configs), "
-            "unreleased (ctxt_dm_max dly_dm_max), all. "
+            "Tasks to rank, or a group: missing / unreleased (default, six "
+            "without IRCB-26 datasets), selected (14 released), all. "
             f"Missing: {', '.join(MISSING_TASKS)}."
         ),
     )
@@ -456,10 +465,12 @@ def main() -> None:
         raise SystemExit(f"Unknown --tasks: {unknown}")
     if set(tasks) == set(YANG20_TASKS):
         default_csv = "mt_poisson_dataset_pairs.csv"
-    elif set(tasks) == set(UNRELEASED_TASKS):
-        default_csv = "mt_poisson_dataset_pairs_unreleased.csv"
-    else:
+    elif set(tasks) == set(SELECTED_TASKS):
+        default_csv = "mt_poisson_dataset_pairs_selected.csv"
+    elif set(tasks) == set(MISSING_TASKS) or set(tasks) == set(UNRELEASED_TASKS):
         default_csv = "mt_poisson_dataset_pairs_missing.csv"
+    else:
+        default_csv = "mt_poisson_dataset_pairs.csv"
     pair_path = (
         Path(args.output).expanduser().resolve()
         if args.output
