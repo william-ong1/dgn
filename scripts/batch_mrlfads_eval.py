@@ -35,9 +35,17 @@ import pandas as pd
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+for _mrl in (
+    REPO_ROOT / "mrlfads2",
+    REPO_ROOT.parent / "mrlfads2",
+    REPO_ROOT.parent / "Projects" / "mrlfads2",
+):
+    if _mrl.is_dir() and str(_mrl) not in sys.path:
+        sys.path.insert(0, str(_mrl))
 
 from src.evals.evals import evaluate_submission
 from src.evals.eval_utils import (
+    YANG20_TASKS,
     discover_mrlfads_runs,
     load_mrlfads_ic_enc_seq_len,
     parse_yang_run_name,
@@ -65,8 +73,11 @@ def _resolve_truth_time_start(
     truth_time_start: int | str | None,
 ) -> int:
     if truth_time_start is None or str(truth_time_start).lower() == "auto":
-        if experiment_type in ("memory_network", "multi_task"):
-            return load_mrlfads_ic_enc_seq_len(run_dir)
+        if experiment_type in ("memory_network", "multi_task", "pass_decision"):
+            try:
+                return load_mrlfads_ic_enc_seq_len(run_dir)
+            except (FileNotFoundError, KeyError, TypeError, ValueError):
+                return 0
         return 0
     return int(truth_time_start)
 
@@ -240,6 +251,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--tasks",
+        nargs="+",
+        default=None,
+        metavar="TASK",
+        help=(
+            "Keep only runs whose folder parses as these Yang task names "
+            "(e.g. dm_1 dm_2 dly_dm_mod_1 dly_dm_mod_2 ctxt_dm_max dly_dm_max)."
+        ),
+    )
+    parser.add_argument(
         "--recursive",
         action="store_true",
         help="Search nested subdirectories for run folders (e.g. rt_go/<run>/).",
@@ -331,6 +352,7 @@ def main() -> None:
         else (repo_root / config_dir).resolve()
     )
     output_dir = args.output_dir.expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
     summary_csv = args.summary_csv.expanduser().resolve()
     rates_truth_h5 = (
         args.rates_truth_h5.expanduser().resolve()
@@ -357,6 +379,17 @@ def main() -> None:
         run_glob = "*_kl*"
 
     runs = _discover_runs(runs_dir, run_glob=run_glob, recursive=args.recursive)
+    if args.tasks:
+        wanted = set(args.tasks)
+        bad = sorted(wanted - set(YANG20_TASKS))
+        if bad:
+            raise SystemExit(f"Unknown --tasks (not in YANG20_TASKS): {bad}")
+        kept = [p for p in runs if parse_yang_run_name(p.name)[0] in wanted]
+        print(
+            f"Filtered to {len(kept)} / {len(runs)} runs for tasks: "
+            + " ".join(sorted(wanted))
+        )
+        runs = kept
     if not runs:
         raise SystemExit(f"No runnable checkpoints found in {runs_dir}")
 

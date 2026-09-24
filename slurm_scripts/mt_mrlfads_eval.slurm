@@ -25,13 +25,24 @@ OUT=/gscratch/golub/wong2/mrlfads_runs/mt_eval_outputs
 mkdir -p /mmfs1/gscratch/golub/wong2/slurm_logs "${OUT}"
 cd "${REPO}"
 
+# Remaining 6 Yang tasks (the original 14 are already in mt_eval_outputs).
+TASKS=(
+  dm_1
+  dm_2
+  dly_dm_mod_1
+  dly_dm_mod_2
+  ctxt_dm_max
+  dly_dm_max
+)
+
 python scripts/batch_mrlfads_eval.py \
   --runs-dir "${RUNS}" \
   --experiment-type multi_task \
   --output-dist poisson \
   --resolve-data-from-run \
   --run-glob '*_kl*' \
+  --tasks "${TASKS[@]}" \
   --accelerator gpu \
   --output-dir "${OUT}" \
-  --summary-csv "${OUT}/evaluation_summary_all_runs.csv" \
+  --summary-csv "${OUT}/evaluation_summary_remaining6.csv" \
   --skip-existing
