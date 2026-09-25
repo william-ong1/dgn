@@ -42,6 +42,49 @@ def infer_submission_pred_time_len(submission: ArrayMap) -> int:
     return int(t)
 
 
+def load_observed_indices(run_dir: Path | str | None) -> dict[str, np.ndarray] | None:
+    """Channel IDs the MR-LFADS run actually saw (partial observation)."""
+    if run_dir is None:
+        return None
+    run = Path(run_dir)
+    dm_cfg = run / "configs" / "datamodule" / "datamodule.yaml"
+    if dm_cfg.is_file():
+        with dm_cfg.open(encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        raw = cfg.get("observed_indices")
+        if isinstance(raw, dict) and raw:
+            return {str(k): np.asarray(v, dtype=np.int64) for k, v in raw.items()}
+    obs_yaml = run / "observed_neurons.yaml"
+    if obs_yaml.is_file():
+        with obs_yaml.open(encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        areas = cfg.get("areas") or {}
+        out: dict[str, np.ndarray] = {}
+        for name, spec in areas.items():
+            if isinstance(spec, dict) and spec.get("observed") is not None:
+                out[str(name)] = np.asarray(spec["observed"], dtype=np.int64)
+        if out:
+            return out
+    return None
+
+
+def apply_observed_channel_slice(
+    arrays: ArrayMap, observed: dict[str, np.ndarray] | None
+) -> ArrayMap:
+    """Restrict ``area-*`` tensors to the observed channel IDs when widths differ."""
+    if not observed:
+        return arrays
+    out = dict(arrays)
+    for name, idxs in observed.items():
+        key = f"area-{name}"
+        if key not in out:
+            continue
+        arr = out[key]
+        if arr.ndim >= 3 and arr.shape[-1] != len(idxs):
+            out[key] = np.take(arr, idxs, axis=-1)
+    return out
+
+
 # Slice the truth arrays along time dimension so truth arrays align with the submission time 0.
 def slice_truth_for_time_alignment(truth: ArrayMap, *, truth_time_start: int, pred_time_len: int) -> ArrayMap:
     if truth_time_start < 0:

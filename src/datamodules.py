@@ -425,25 +425,30 @@ class MultiTask(DGNDataModuleBase):
 
         batch_size = len(batch_order)
 
-        # Initialize arrays for each task type
+        # Two directional alternatives per modality: angle (T, 2) and strength (T, 2).
+        n_alt = 2
         fixs = np.zeros((batch_size, hps.time_total, 1))
-        stim1s = np.zeros((batch_size, hps.time_total, 1))
-        stim2s = np.zeros((batch_size, hps.time_total, 1))
+        stim1s = np.zeros((batch_size, hps.time_total, n_alt))
+        stim2s = np.zeros((batch_size, hps.time_total, n_alt))
         resps = np.zeros((batch_size, hps.time_total, 1))
         saccs = np.zeros((batch_size, hps.time_total, 1))
-        amp1s = np.zeros((batch_size, 1))
-        amp2s = np.zeros((batch_size, 1))
-        
-        # Generate data for each batch
+        amp1s = np.zeros((batch_size, hps.time_total, n_alt))
+        amp2s = np.zeros((batch_size, hps.time_total, n_alt))
+
+        def noisy_angles(stim, amp):
+            """Jitter active directions. Silent slots (strength 0) stay at 0."""
+            jittered = normalize(stim + gen_noise(stim, mag=0.1))
+            return np.where(amp > 0, jittered, 0.0)
+
         for b, tpe in enumerate(batch_order):
             fix, (stim1, amp1), (stim2, amp2), resp, sacc = tasks[int(tpe)].gen_single_trial()
             fixs[b, :] = fix + gen_noise(fix)
-            stim1s[b, :] = normalize(stim1 + gen_noise(stim1, mag=0.1)) # stim1
-            stim2s[b, :] = normalize(stim2 + gen_noise(stim2, mag=0.1)) # stim2
+            stim1s[b, :] = noisy_angles(stim1, amp1)
+            stim2s[b, :] = noisy_angles(stim2, amp2)
             resps[b, :] = resp
             saccs[b, :] = sacc
-            amp1s[b] = amp1
-            amp2s[b] = amp2
+            amp1s[b, :] = amp1
+            amp2s[b, :] = amp2
         
         # Create task indices and return dataset
         task_idxs = np.tile(batch_order.reshape(-1, 1, 1), (1, hps.time_total, 1))

@@ -15,6 +15,8 @@ from .eval_utils import (
     load_session_arrays,
     resolve_dataset_config_dir,
     slice_truth_for_time_alignment,
+    load_observed_indices,
+    apply_observed_channel_slice,
 )
 
 from .metrics import (
@@ -171,6 +173,8 @@ def evaluate_submission(
 
     pred_t = infer_submission_pred_time_len(submission)
     truth = slice_truth_for_time_alignment(truth_full, truth_time_start=truth_time_start, pred_time_len=pred_t)
+    observed = load_observed_indices(mrlfads_run_dir)
+    truth = apply_observed_channel_slice(truth, observed)
 
     rates_truth = None
     if rates_truth_h5 is not None:
@@ -181,6 +185,7 @@ def evaluate_submission(
             poisson_dt=poisson_dt,
             poisson_rate_max=poisson_rate_max,
         )
+        rates_truth = apply_observed_channel_slice(rates_truth, observed)
 
     eval_config = config_path
     transform_kwargs = {
@@ -341,7 +346,7 @@ def _attach_transform_metrics(
             dgn_run_dir=dgn_run_dir,
             mrlfads_run_dir=mrlfads_run_dir,
         )
-    except (FileNotFoundError, KeyError, ValueError) as exc:
+    except (FileNotFoundError, KeyError, ValueError, ModuleNotFoundError) as exc:
         print(f"skip transform-matrix metric: {type(exc).__name__}: {exc}")
         return
 

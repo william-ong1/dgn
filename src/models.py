@@ -880,8 +880,9 @@ class MultiTaskNet(DGNBase):
 
         fix, stim1, amp1, stim2, amp2, task, resp, sacc = inp
         resp = resp.float()
-        polar1 = torch.cat([stim1, torch.tile(amp1.unsqueeze(1), (1, stim1.shape[1], 1))], dim=2)
-        polar2 = torch.cat([stim2, torch.tile(amp2.unsqueeze(1), (1, stim2.shape[1], 1))], dim=2)
+        # Each modality is two alternatives: [θ0, θ1, s0, s1], strengths already over time.
+        polar1 = torch.cat([stim1, amp1], dim=2)
+        polar2 = torch.cat([stim2, amp2], dim=2)
         self.forward([fix, polar1, polar2, task], step_type)
 
         # Fixation loss
@@ -1133,9 +1134,9 @@ class MultiTaskNet(DGNBase):
                 if hps.stim_input_areas[0] == area_name:
                     num_input += 1  # fix
                 if hps.stim_input_areas[1] == area_name:
-                    num_input += 2  # stim1
+                    num_input += 4  # stim1: two (angle, strength) pairs
                 if hps.stim_input_areas[2] == area_name:
-                    num_input += 2  # stim2
+                    num_input += 4  # stim2: two (angle, strength) pairs
                 if len(hps.stim_input_areas) > 3 and hps.stim_input_areas[3] == area_name:
                     num_input += 1  # task
 
@@ -1185,9 +1186,9 @@ class MultiTaskNet(DGNBase):
                 if hps.stim_input_areas[0] == area_name:
                     num_input += 1
                 if hps.stim_input_areas[1] == area_name:
-                    num_input += 2
+                    num_input += 4
                 if hps.stim_input_areas[2] == area_name:
-                    num_input += 2
+                    num_input += 4
                 if len(hps.stim_input_areas) > 3 and hps.stim_input_areas[3] == area_name:
                     num_input += 1
             self.inputs[area_name] = torch.zeros(batch_size, time, num_input).to(self.device)
